@@ -15,6 +15,21 @@
       property="og:description"
       content="Scan local LLMs and rate them on quality × speed. Runs entirely in your browser."
     />
+    <script>
+      // Apply the persisted theme before React mounts so the page paints
+      // with the right colours on the first frame (no flash-of-wrong-theme).
+      // Mirrors the logic in src/components/theme-toggle.tsx.
+      (function () {
+        try {
+          var t = localStorage.getItem('openbench-local:theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.classList.add(t);
+          }
+        } catch (e) {
+          /* private mode — silently fall back to system preference */
+        }
+      })();
+    </script>
   </head>
   <body>
     <div id="root"></div>
