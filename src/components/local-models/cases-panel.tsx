@@ -1,7 +1,8 @@
+import * as Switch from '@radix-ui/react-switch';
 import { useRef, useState } from 'react';
 import type { InlineCase } from './builtin-suite';
 import { CaseEditModal } from './case-edit-modal';
-import { type CaseSource, type EffectiveCase, useCaseStore } from './case-store';
+import { type CaseSource, useCaseStore } from './case-store';
 import { decodeCasesYaml, encodeCasesYaml } from './cases-yaml';
 
 /**
@@ -19,7 +20,18 @@ interface Props {
 }
 
 export function CasesPanel({ disabled, store }: Props) {
-  const { effective, isBuiltin, upsertCase, deleteCase, resetCase, resetAll, appendCustom } = store;
+  const {
+    effective,
+    isBuiltin,
+    upsertCase,
+    deleteCase,
+    resetCase,
+    resetAll,
+    appendCustom,
+    setEnabled,
+    moveCase,
+    allCasesForExport,
+  } = store;
   const [collapsed, setCollapsed] = useState(true);
   const [editing, setEditing] = useState<{ mode: 'add' | 'edit'; initial: InlineCase | null }>({
     mode: 'add',
@@ -28,6 +40,11 @@ export function CasesPanel({ disabled, store }: Props) {
   const [editorOpen, setEditorOpen] = useState(false);
   const [importError, setImportError] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement | null>(null);
+  // Drag-and-drop reorder. Only the dragged id is held in React
+  // state; the drop target is computed from the dragover event so
+  // reordering is responsive without a re-render per pointer move.
+  const [draggingId, setDraggingId] = useState<string | null>(null);
+  const [dropOverId, setDropOverId] = useState<string | null>(null);
 
   const onAdd = () => {
     setEditing({ mode: 'add', initial: null });
@@ -41,7 +58,7 @@ export function CasesPanel({ disabled, store }: Props) {
   const idIsTaken = (id: string) => effective.some((e) => e.case.id === id);
 
   const onExport = () => {
-    const yaml = encodeCasesYaml(effective.map((e) => e.case));
+    const yaml = encodeCasesYaml(allCasesForExport);
     const blob = new Blob([yaml], { type: 'text/yaml' });
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
@@ -78,7 +95,8 @@ export function CasesPanel({ disabled, store }: Props) {
             Eval cases
           </p>
           <h2 className="mt-1 text-base font-semibold text-fg">
-            {effective.length} case{effective.length === 1 ? '' : 's'} will run
+            {effective.filter((e) => e.enabled).length} of {effective.length} case
+            {effective.length === 1 ? '' : 's'} will run
           </h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-fg-muted">
             Built-in cases ship by default. Edit any of them, hide the ones you don't care about,
@@ -139,21 +157,57 @@ export function CasesPanel({ disabled, store }: Props) {
 
       {!collapsed ? (
         <div className="px-5 py-5">
-          <ul className="flex flex-col gap-1.5">
-            {effective.map(({ case: c, source }) => (
+          <ul
+            className="flex flex-col gap-1.5"
+            onDragOver={(e) => e.preventDefault()}
+            onDrop={() => {
+              setDraggingId(null);
+              setDropOverId(null);
+            }}
+          >
+            {effective.map(({ case: c, source, enabled }) => (
               <CaseRow
                 key={c.id}
                 c={c}
                 source={source}
+                enabled={enabled}
                 disabled={disabled}
+                isDragging={draggingId === c.id}
+                isDropTarget={dropOverId === c.id && draggingId !== null && draggingId !== c.id}
                 onEdit={() => onEdit(c)}
                 onDelete={() => deleteCase(c.id)}
                 onReset={isBuiltin(c.id) ? () => resetCase(c.id) : null}
+                onToggleEnabled={(on) => setEnabled(c.id, on)}
+                onDragStart={(ev) => {
+                  setDraggingId(c.id);
+                  ev.dataTransfer.effectAllowed = 'move';
+                  ev.dataTransfer.setData('text/plain', c.id);
+                }}
+                onDragEnd={() => {
+                  setDraggingId(null);
+                  setDropOverId(null);
+                }}
+                onDragOver={(ev) => {
+                  ev.preventDefault();
+                  ev.dataTransfer.dropEffect = 'move';
+                  if (draggingId !== null && draggingId !== c.id) setDropOverId(c.id);
+                }}
+                onDrop={(ev) => {
+                  ev.preventDefault();
+                  ev.stopPropagation();
+                  const fromId = ev.dataTransfer.getData('text/plain') || draggingId;
+                  setDraggingId(null);
+                  setDropOverId(null);
+                  if (fromId !== null && fromId !== '' && fromId !== c.id) {
+                    moveCase(fromId, c.id);
+                  }
+                }}
               />
             ))}
             {effective.length === 0 ? (
               <p className="text-sm text-fg-muted">
-                Every case is hidden. Press “Reset all” to restore the built-in suite.
+                No cases. Press <em>Add case</em> or <em>Reset all</em> to restore the built-in
+                suite.
               </p>
             ) : null}
           </ul>
@@ -198,25 +252,62 @@ export function CasesPanel({ disabled, store }: Props) {
   );
 }
 
+interface CaseRowProps {
+  readonly c: InlineCase;
+  readonly source: CaseSource;
+  readonly enabled: boolean;
+  readonly disabled: boolean;
+  readonly isDragging: boolean;
+  readonly isDropTarget: boolean;
+  readonly onEdit: () => void;
+  readonly onDelete: () => void;
+  readonly onReset: (() => void) | null;
+  readonly onToggleEnabled: (on: boolean) => void;
+  readonly onDragStart: (ev: React.DragEvent<HTMLLIElement>) => void;
+  readonly onDragEnd: (ev: React.DragEvent<HTMLLIElement>) => void;
+  readonly onDragOver: (ev: React.DragEvent<HTMLLIElement>) => void;
+  readonly onDrop: (ev: React.DragEvent<HTMLLIElement>) => void;
+}
+
 function CaseRow({
   c,
   source,
+  enabled,
   disabled,
+  isDragging,
+  isDropTarget,
   onEdit,
   onDelete,
   onReset,
-}: {
-  c: InlineCase;
-  source: CaseSource;
-  disabled: boolean;
-  onEdit: () => void;
-  onDelete: () => void;
-  onReset: (() => void) | null;
-}) {
+  onToggleEnabled,
+  onDragStart,
+  onDragEnd,
+  onDragOver,
+  onDrop,
+}: CaseRowProps) {
   const preview = c.input.replace(/\s+/g, ' ').slice(0, 90);
   return (
-    <li className="flex flex-col gap-2 rounded-lg border border-border bg-bg px-3 py-2 text-sm sm:flex-row sm:items-center">
-      <div className="flex min-w-0 flex-1 flex-col gap-1">
+    <li
+      draggable={!disabled}
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOver}
+      onDrop={onDrop}
+      className={[
+        'flex flex-col gap-2 rounded-lg border bg-bg px-3 py-2 text-sm sm:flex-row sm:items-center',
+        isDropTarget ? 'border-accent ring-1 ring-accent/40' : 'border-border',
+        isDragging ? 'opacity-50' : '',
+        !enabled ? 'bg-bg-subtle/40' : '',
+      ].join(' ')}
+    >
+      <span
+        aria-hidden
+        title="Drag to reorder"
+        className="hidden cursor-grab select-none text-fg-faint hover:text-fg sm:inline-block"
+      >
+        ⋮⋮
+      </span>
+      <div className={`flex min-w-0 flex-1 flex-col gap-1 ${enabled ? '' : 'opacity-60'}`}>
         <div className="flex flex-wrap items-center gap-2">
           <code className="rounded bg-bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-fg">
             {c.id}
@@ -241,7 +332,16 @@ function CaseRow({
           {c.input.length > 90 ? '…' : ''}
         </p>
       </div>
-      <div className="flex flex-shrink-0 items-center gap-1">
+      <div className="flex flex-shrink-0 items-center gap-2">
+        <Switch.Root
+          checked={enabled}
+          onCheckedChange={onToggleEnabled}
+          disabled={disabled}
+          title={enabled ? 'Enabled — included in runs' : 'Disabled — skipped at run time'}
+          className="relative h-5 w-9 rounded-full border border-border bg-bg-subtle outline-none transition-colors data-[state=checked]:bg-accent data-[disabled]:opacity-50"
+        >
+          <Switch.Thumb className="block h-4 w-4 translate-x-0.5 rounded-full bg-bg-elevated shadow-sm transition-transform will-change-transform data-[state=checked]:translate-x-[18px]" />
+        </Switch.Root>
         <button
           type="button"
           onClick={onEdit}
@@ -260,16 +360,17 @@ function CaseRow({
           >
             Reset
           </button>
-        ) : null}
-        <button
-          type="button"
-          onClick={onDelete}
-          disabled={disabled}
-          className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
-          title={onReset !== null ? 'Hide this built-in case' : 'Delete this custom case'}
-        >
-          {onReset !== null ? 'Hide' : 'Delete'}
-        </button>
+        ) : (
+          <button
+            type="button"
+            onClick={onDelete}
+            disabled={disabled}
+            className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10 disabled:opacity-50"
+            title="Delete this custom case"
+          >
+            Delete
+          </button>
+        )}
       </div>
     </li>
   );

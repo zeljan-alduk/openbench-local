@@ -129,62 +129,70 @@ export function CaseEditModal({
     }
   }, [previewExpect, sampleOutput]);
 
-  const onSubmit = () => {
-    setError(null);
+  /**
+   * Build an InlineCase from the current form state. Returns either a
+   * validated case or a structured error so callers can decide whether
+   * to surface it in the form (Save) or the test pane (Run test).
+   */
+  const buildCase = (): { ok: true; case: InlineCase } | { ok: false; error: string } => {
     const trimmedId = id.trim();
-    if (trimmedId === '') {
-      setError('id is required.');
-      return;
-    }
+    if (trimmedId === '') return { ok: false, error: 'id is required.' };
     if (!/^[a-z0-9][a-z0-9-]*$/.test(trimmedId)) {
-      setError('id must be lowercase letters, digits, and dashes (e.g. `my-test-1`).');
-      return;
+      return {
+        ok: false,
+        error: 'id must be lowercase letters, digits, and dashes (e.g. `my-test-1`).',
+      };
     }
     if (mode === 'add' && idIsTaken(trimmedId)) {
-      setError(`A case with id "${trimmedId}" already exists.`);
-      return;
+      return { ok: false, error: `A case with id "${trimmedId}" already exists.` };
     }
     if (mode === 'edit' && initial !== null && trimmedId !== initial.id && idIsBuiltin) {
-      setError('Built-in case ids cannot be renamed (they anchor skip / retry).');
-      return;
+      return {
+        ok: false,
+        error: 'Built-in case ids cannot be renamed (they anchor skip / retry).',
+      };
     }
-    if (input.trim() === '') {
-      setError('input is required.');
-      return;
-    }
+    if (input.trim() === '') return { ok: false, error: 'input is required.' };
     const w = Number(weight);
     if (!Number.isFinite(w) || w <= 0) {
-      setError('weight must be a positive number.');
-      return;
+      return { ok: false, error: 'weight must be a positive number.' };
     }
-    if (!previewExpect.ok) {
-      setError(`evaluator: ${previewExpect.error}`);
-      return;
-    }
+    if (!previewExpect.ok) return { ok: false, error: `evaluator: ${previewExpect.error}` };
     if (
       !advancedLocked &&
       evalKind !== 'json_schema' &&
       evalKind !== 'tool_call' &&
       evalValue === ''
     ) {
-      setError(`Evaluator "${evalKind}" needs a non-empty value.`);
-      return;
+      return { ok: false, error: `Evaluator "${evalKind}" needs a non-empty value.` };
     }
     const tagList = tags
       .split(',')
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
-    const next: InlineCase = {
-      id: trimmedId,
-      input,
-      expect: previewExpect.expect,
-      weight: w,
-      tags: tagList,
-      ...(requires === '' ? {} : { requires }),
-      ...(initial?.tools !== undefined && advancedLocked ? { tools: initial.tools } : {}),
-      ...(initial?.image !== undefined && advancedLocked ? { image: initial.image } : {}),
+    return {
+      ok: true,
+      case: {
+        id: trimmedId,
+        input,
+        expect: previewExpect.expect,
+        weight: w,
+        tags: tagList,
+        ...(requires === '' ? {} : { requires }),
+        ...(initial?.tools !== undefined && advancedLocked ? { tools: initial.tools } : {}),
+        ...(initial?.image !== undefined && advancedLocked ? { image: initial.image } : {}),
+      },
     };
-    onSave(next);
+  };
+
+  const onSubmit = () => {
+    setError(null);
+    const built = buildCase();
+    if (!built.ok) {
+      setError(built.error);
+      return;
+    }
+    onSave(built.case);
     onOpenChange(false);
   };
 
@@ -364,6 +372,7 @@ export function CaseEditModal({
                   invalid={!previewExpect.ok ? previewExpect.error : null}
                 />
               </div>
+
             </aside>
           </div>
 
