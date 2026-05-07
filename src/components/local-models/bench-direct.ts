@@ -163,7 +163,12 @@ export interface RunBenchOptions {
   readonly runConfig?: RunConfig;
 }
 
-const DEFAULT_MAX_TOKENS = 1024;
+// 2048 default (raised from 1024) so reasoning models — gpt-oss,
+// DeepSeek-R1, QwQ, etc. — have room to finish their thinking trace
+// and still emit a visible answer. The CoT content alone often
+// consumes 1k+ tokens on medium-effort cases; below 2k the model
+// hits the cap mid-thought and we capture zero output.
+const DEFAULT_MAX_TOKENS = 2048;
 
 /** Run the suite. Returns the final summary. */
 export async function runBenchDirect(opts: RunBenchOptions): Promise<{

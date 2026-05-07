@@ -346,9 +346,33 @@ function ExpandedDetail({ row }: { row: BenchCaseRow }) {
         className="lg:col-span-2"
       >
         {row.output.length === 0 && row.error === undefined && row.toolCalls.length === 0 ? (
-          <p className="rounded-md border border-dashed border-border bg-bg px-3 py-4 text-center text-xs text-fg-muted">
-            (empty content — model produced no visible output)
-          </p>
+          (() => {
+            // Heuristic for "reasoning ate the whole budget": the model
+            // emitted zero content tokens but most/all of its token
+            // output went to the reasoning_content channel. Tells the
+            // user *why* the row is empty and what to do about it,
+            // instead of just "no visible output".
+            const reasoningHeavy =
+              row.reasoningRatio !== null && row.reasoningRatio >= 0.8;
+            const looksCapped =
+              row.tokensOut !== null && row.tokensOut >= 1024;
+            if (reasoningHeavy && looksCapped) {
+              return (
+                <p className="rounded-md border border-dashed border-amber-500/40 bg-amber-500/5 px-3 py-3 text-xs text-amber-700 dark:text-amber-400">
+                  Reasoning consumed all {row.tokensOut} output tokens before the model could
+                  emit a visible answer. Bump <code className="font-mono">max_tokens</code> in
+                  the Setup panel (try 4096+) or set{' '}
+                  <code className="font-mono">reasoning_effort</code> to{' '}
+                  <code className="font-mono">low</code> for this model.
+                </p>
+              );
+            }
+            return (
+              <p className="rounded-md border border-dashed border-border bg-bg px-3 py-4 text-center text-xs text-fg-muted">
+                (empty content — model produced no visible output)
+              </p>
+            );
+          })()
         ) : row.output.length > 0 ? (
           <CollapsibleText
             text={row.output}
