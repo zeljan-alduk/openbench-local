@@ -2,6 +2,7 @@
 
 [![CI](https://github.com/zeljan-alduk/openbench-local/actions/workflows/ci.yml/badge.svg)](https://github.com/zeljan-alduk/openbench-local/actions/workflows/ci.yml)
 [![Pages](https://github.com/zeljan-alduk/openbench-local/actions/workflows/pages.yml/badge.svg)](https://github.com/zeljan-alduk/openbench-local/actions/workflows/pages.yml)
+[![Container](https://github.com/zeljan-alduk/openbench-local/actions/workflows/container.yml/badge.svg)](https://github.com/zeljan-alduk/openbench-local/actions/workflows/container.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > Discover and benchmark every local LLM on your machine, in seconds, from your browser.
@@ -56,6 +57,20 @@ machine.
 
 ## Quickstart
 
+Pick whichever fits — all three serve the exact same SPA.
+
+**Pull the published Docker image** (multi-arch `linux/amd64` +
+`linux/arm64`, rebuilt on every merge to `main`):
+
+```bash
+docker run --rm -p 8080:80 ghcr.io/zeljan-alduk/openbench-local:latest
+# or:  docker compose up -d
+```
+
+→ open <http://localhost:8080>
+
+**Run from source with Node**:
+
 ```bash
 git clone https://github.com/zeljan-alduk/openbench-local.git
 cd openbench-local
@@ -63,38 +78,18 @@ pnpm install
 pnpm dev
 ```
 
-Open http://localhost:5173.
+→ open <http://localhost:5173>
 
-### Docker
-
-Prefer not to install Node? Three options:
-
-**1. Pull the published image** (built by CI on every merge to `main`,
-multi-arch `linux/amd64` + `linux/arm64`):
-
-```bash
-docker run --rm -p 8080:80 ghcr.io/zeljan-alduk/openbench-local:latest
-```
-
-**2. `docker compose up`** — uses the same image, adds a healthcheck
-and `restart: unless-stopped`:
-
-```bash
-docker compose up -d
-```
-
-**3. Build from source** (no Node needed on the host):
+**Build the Docker image from source** (no Node on the host):
 
 ```bash
 docker build -t openbench-local .
 docker run --rm -p 8080:80 openbench-local
 ```
 
-Then open http://localhost:8080.
-
 The container only serves the static bundle — your browser does *all*
 LLM traffic itself, directly to the host's `127.0.0.1`, so no
-`--network=host` flag or `host.docker.internal` plumbing is required.
+`--network=host` or `host.docker.internal` plumbing is required.
 
 Image tags published to `ghcr.io/zeljan-alduk/openbench-local`:
 
@@ -105,7 +100,10 @@ Image tags published to `ghcr.io/zeljan-alduk/openbench-local`:
 | `sha-<short>`   | every push to `main` |
 | `v1.2.3`, `1.2`, `1` | git tag `v1.2.3` |
 
-Then start at least one local LLM server:
+## Local LLM engines
+
+Start at least one of these alongside the SPA. The page
+auto-discovers them on default ports:
 
 | Engine     | Default port | One-line start                                |
 | ---------- | ------------ | --------------------------------------------- |
@@ -114,8 +112,8 @@ Then start at least one local LLM server:
 | vLLM       | 8000         | `vllm serve <model>`                          |
 | llama.cpp  | 8080         | `llama-server -m <gguf>`                      |
 
-The page auto-discovers each one. The first model is auto-selected; tap
-more cards to compare side-by-side.
+The first discovered model is auto-selected; click more cards to
+compare side-by-side.
 
 ## Browser permissions — read this first
 
@@ -170,28 +168,58 @@ Per-model overrides are available too — gear icon on a model card.
 Precedence: global panel wins for any field it sets, per-model overrides
 fill in the rest.
 
-## Custom eval cases
+## Editable eval suite
 
-Click **Eval cases** in the panel between Setup and Run. From there you
-can:
+Click **Eval cases** in the panel between Setup and Run. The panel is
+a full case-editor:
 
-- **Edit any built-in case** — change the prompt, evaluator, weight,
-  or tags. Edits are stored in your browser only.
-- **Hide cases you don't care about** — the runner skips them entirely.
-- **Add your own custom cases** — same shape as the built-ins. Five
-  evaluator kinds are available in the form: `contains`,
-  `not_contains`, `regex`, `exact`, `json_schema`. Tool-call evaluators
-  and image attachments are preserved on round-trip but only authorable
-  via YAML.
-- **Export everything to YAML** — share your suite with a teammate, or
-  back it up.
-- **Import YAML** — drop in a `.yaml` file with a list of cases (our
-  wrapper shape, a bare list, or a `{ suite: { cases } }` block all
-  work).
-- **Reset all** — restores the 18 built-in defaults.
+- **Search / filter** by id, tag, evaluator kind, or prompt body.
+- **Enable / disable** any case via a toggle switch — disabled rows
+  stay visible but are skipped at run time.
+- **Bulk enable / disable visible** — operates on whatever the search
+  matches, or the whole suite when no filter is set.
+- **Drag-and-drop reorder** — runtime sequence persists across reloads.
+- **Edit any built-in or custom case** in a side-by-side editor with
+  a live row preview and a "Try it" sandbox that scores a pasted
+  sample output through the evaluator in real time.
+- **Duplicate** any case — mints a unique id and opens the editor on
+  the copy so you can tweak before saving.
+- **Six evaluator kinds, all authorable in the form**: `contains`,
+  `not_contains`, `regex`, `exact`, `json_schema`, `tool_call`
+  (function name + optional args schema). The `tools` array (function
+  specs offered to the model) lives in a collapsible "Tools spec
+  (advanced)" section.
+- **Image + text/code attachments** via a file picker:
+  - Image (`png` / `jpeg` / `webp` / `gif`, up to 2 MB) → wired to the
+    chat-completion request as the OpenAI vision `image_url` content
+    part. Setting an attachment auto-flips the case's `vision`
+    capability gate.
+  - Text-like file (`.txt`, `.md`, `.json`, `.yaml`, `.csv`, code
+    extensions, up to 200 KB) → contents appended to the prompt
+    textarea under a `=== filename ===` fence so you can edit before
+    saving.
+  - Binary docs (`.pdf` / `.docx` / `.xlsx` / `.mp3` / `.mp4` / etc.)
+    → explicit refusal with an "extract text first" hint, since local
+    chat-completion APIs don't accept those bytes.
+- **Reset** any built-in to its default; **Delete** any custom; or
+  **Reset all** to roll back the entire suite to the shipped 18 cases.
+- **Export YAML** — every case in the user's order. **Import YAML** —
+  accepts the wrapper shape, a bare list, or a `{ suite: { cases } }`
+  block.
 
-State lives in `localStorage` under `openbench-local:cases`. Nothing is
-uploaded.
+State lives in `localStorage` under `openbench-local:cases`. Image
+data URLs count against the browser's ~5–10 MB origin quota; the
+2 MB-per-image cap and 200 KB-per-text cap are deliberately
+conservative for that reason. Nothing is uploaded.
+
+## Theme
+
+Top-right pill toggles between **light**, **system** (follows
+`prefers-color-scheme`), and **dark**. Choice is persisted to
+`localStorage` under `openbench-local:theme`; an inline pre-paint
+script in `index.html` applies the saved class to `<html>` before
+React mounts so the page paints with the right colours on the first
+frame (no flash-of-wrong-theme).
 
 ## Build for production
 
@@ -207,22 +235,18 @@ sub-path on a parent domain.
 
 ## CI / CD
 
-Two GitHub Actions workflows handle the development cycle:
+Four GitHub Actions workflows handle the development cycle:
 
-- **`.github/workflows/ci.yml`** — typecheck + production build on every
-  push and pull request. Uploads `dist/` as a workflow artifact.
-- **`.github/workflows/pages.yml`** — deploys to GitHub Pages.
-  - `push` to `main` → `gh-pages/` root → served at
-    `https://zeljan-alduk.github.io/openbench-local/`.
-  - `pull_request` → `gh-pages/pr-<N>/` → served at
-    `https://zeljan-alduk.github.io/openbench-local/pr-<N>/`.
+| Workflow | Trigger | Output |
+| --- | --- | --- |
+| **`ci.yml`** | every push / PR | typecheck + production build, uploads `dist/` artifact |
+| **`pages.yml`** | `main` & PRs | publishes to GitHub Pages — `gh-pages/` root for prod, `gh-pages/pr-<N>/` for previews |
+| **`pr-cleanup.yml`** | PR closed | removes the matching `pr-<N>/` folder so previews don't accumulate |
+| **`container.yml`** | `main` & `v*` tags | multi-arch (`amd64` + `arm64`) container image to `ghcr.io/zeljan-alduk/openbench-local` |
 
-  A sticky comment on the PR carries both URLs and refreshes on every
-  push to the branch.
-
-- **`.github/workflows/pr-cleanup.yml`** — when a PR closes (merged or
-  not), removes the `pr-<N>/` folder from `gh-pages` so previews don't
-  accumulate.
+A sticky comment on each PR carries the GitHub Pages preview URL plus
+the proxied `ai.aldo.tech/opensource/openbench-local/pr-<N>/` URL,
+refreshes on every push, and updates to "Preview removed" on close.
 
 ### How the dev cycle looks in practice
 
@@ -256,27 +280,42 @@ After cloning, enable GitHub Pages in the repo settings:
 
 ```
 openbench-local/
-├── index.html
+├── index.html                              # SPA entry + pre-paint theme script
+├── Dockerfile                              # node:22-alpine build → nginx:1.27-alpine serve
+├── docker-compose.yml                      # one-liner self-host
 ├── public/
 │   └── favicon.svg
 ├── src/
-│   ├── App.tsx                     # page shell + hero copy
-│   ├── main.tsx                    # React entry point
-│   ├── index.css                   # design tokens + tailwind directives
+│   ├── App.tsx                             # page shell + hero copy
+│   ├── main.tsx                            # React entry point
+│   ├── index.css                           # design tokens + tailwind directives
 │   └── components/
+│       ├── theme-toggle.tsx                # light / system / dark
+│       ├── storage-notice.tsx              # GDPR/ePrivacy disclosure
 │       └── local-models/
-│           ├── local-models-shell.tsx     # top-level interactive island
-│           ├── bench-direct.ts            # streaming /chat/completions client
-│           ├── discovery-direct.ts        # localhost port probing
-│           ├── evaluator-direct.ts        # browser-side scoring
-│           ├── builtin-suite.ts           # the 18 inlined eval cases
-│           ├── vision-fixtures.ts         # base64 PNG images for vision cases
-│           ├── capabilities.ts            # per-model capability inference
-│           ├── cors-recipes.ts            # per-engine CORS config snippets
-│           ├── report-export.ts           # md / json / interactive html
-│           ├── per-model-config.ts        # override storage (localStorage)
-│           ├── selection.ts               # canonical model key
-│           └── *.tsx                      # UI components
+│           ├── local-models-shell.tsx      # top-level interactive island
+│           ├── bench-direct.ts             # streaming /chat/completions client
+│           ├── discovery-direct.ts         # localhost port probing
+│           ├── evaluator-direct.ts         # browser-side scoring
+│           ├── builtin-suite.ts            # the 18 inlined eval cases
+│           ├── vision-fixtures.ts          # base64 PNG images for vision cases
+│           ├── capabilities.ts             # per-model capability inference
+│           ├── cors-recipes.ts             # per-engine CORS config snippets
+│           ├── report-export.ts            # md / json / interactive html
+│           ├── case-store.ts               # editable suite — overrides, disabled, order
+│           ├── case-edit-modal.tsx         # full case editor with live preview
+│           ├── cases-panel.tsx             # search / reorder / bulk actions
+│           ├── cases-yaml.ts               # YAML import / export
+│           ├── per-model-config.ts         # per-model run-config overrides
+│           ├── selection.ts                # canonical model key
+│           └── *.tsx                       # remaining UI components
+├── .github/workflows/
+│   ├── ci.yml                              # typecheck + build
+│   ├── pages.yml                           # prod + per-PR preview deploys
+│   ├── pr-cleanup.yml                      # remove preview on PR close
+│   └── container.yml                       # multi-arch GHCR publish
+├── docs/
+│   └── browser-permissions.md              # per-browser CORS / mixed-content / PNA recipes
 ├── tailwind.config.ts
 ├── tsconfig.json
 ├── vite.config.ts
