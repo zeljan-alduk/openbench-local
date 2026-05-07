@@ -268,7 +268,12 @@ export function LocalModelsShell() {
       globalAbortRef.current = null;
       caseSkipRef.current = null;
     }
-  }, [selectedList, runConfig, runConfigEnabled, getPerModel]);
+    // `effectiveSuite` MUST be in deps — without it the callback closes
+    // over the very first render's suite (built-ins only, before any
+    // user edits / customs / reorder hydrated from localStorage), and
+    // every subsequent run uses that frozen copy regardless of what the
+    // panel shows. Same bug applied to retryCase below.
+  }, [selectedList, runConfig, runConfigEnabled, getPerModel, effectiveSuite]);
 
   const stopBench = useCallback(() => {
     globalAbortRef.current?.abort();
@@ -334,7 +339,7 @@ export function LocalModelsShell() {
         setRunError(`Retry failed: ${msg}`);
       }
     },
-    [runs, runConfig, runConfigEnabled, getPerModel],
+    [runs, runConfig, runConfigEnabled, getPerModel, effectiveSuite],
   );
 
   // Set of model keys with active per-model overrides — drives the
