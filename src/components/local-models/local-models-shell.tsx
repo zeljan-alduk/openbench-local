@@ -36,6 +36,8 @@ import {
 } from './bench-direct';
 import { LOCAL_MODEL_RATING_SUITE } from './builtin-suite';
 import { inferCapabilities } from './capabilities';
+import { useCaseStore } from './case-store';
+import { CasesPanel } from './cases-panel';
 import { CorsHelpPanel } from './cors-help-panel';
 import { CustomHostsPanel, useStoredHosts } from './custom-hosts-panel';
 import {
@@ -72,6 +74,14 @@ export function LocalModelsShell() {
     set: setPerModel,
     clear: clearPerModel,
   } = usePerModelConfig();
+  const caseStore = useCaseStore();
+  // Build the effective suite once per render. Empty case lists are
+  // legal (the user hid everything) but the runner still needs a valid
+  // suite skeleton, so we synthesise one off the builtin suite metadata.
+  const effectiveSuite = useMemo(
+    () => ({ ...LOCAL_MODEL_RATING_SUITE, cases: caseStore.effectiveCases }),
+    [caseStore.effectiveCases],
+  );
   const [configModalModel, setConfigModalModel] = useState<DiscoveredLocalModel | null>(null);
   // Global abort: stops the whole campaign across all selected models.
   const globalAbortRef = useRef<AbortController | null>(null);
@@ -171,7 +181,7 @@ export function LocalModelsShell() {
             getPerModel(modelKey(m)),
           );
           const res = await runBenchDirect({
-            suite: LOCAL_MODEL_RATING_SUITE,
+            suite: effectiveSuite,
             modelId: m.id,
             chatBaseUrl: m.chatBaseUrl,
             signal: ac.signal,
@@ -216,7 +226,7 @@ export function LocalModelsShell() {
             onCase: (row) => {
               accumulated.push(row);
               const snapshot = [...accumulated];
-              const summary = summariseWithSuite(snapshot, LOCAL_MODEL_RATING_SUITE);
+              const summary = summariseWithSuite(snapshot, effectiveSuite);
               setRuns((prev) =>
                 prev.map((r, i) =>
                   i === mi ? { ...r, rows: snapshot, summary, inFlight: null } : r,
@@ -291,7 +301,7 @@ export function LocalModelsShell() {
   // index in that model's `rows` array; preserves all other rows.
   const retryCase = useCallback(
     async (modelKeyTarget: string, caseId: string) => {
-      const c = LOCAL_MODEL_RATING_SUITE.cases.find((x) => x.id === caseId);
+      const c = effectiveSuite.cases.find((x) => x.id === caseId);
       if (c === undefined) return;
       const target = runs.find(
         (r) => `${r.model.source}::${r.model.id}::${r.model.port}` === modelKeyTarget,
@@ -311,7 +321,7 @@ export function LocalModelsShell() {
             if (idx < 0) return r;
             const nextRows = [...r.rows];
             nextRows[idx] = fresh;
-            const summary = summariseWithSuite(nextRows, LOCAL_MODEL_RATING_SUITE);
+            const summary = summariseWithSuite(nextRows, effectiveSuite);
             return { ...r, rows: nextRows, summary };
           }),
         );
@@ -371,7 +381,7 @@ export function LocalModelsShell() {
   const onExportJson = useCallback(() => downloadJson(exportCtx), [exportCtx]);
   const onPrintReport = useCallback(() => openPrint(), []);
 
-  const totalCasesPerModel = LOCAL_MODEL_RATING_SUITE.cases.length;
+  const totalCasesPerModel = effectiveSuite.cases.length;
   const completedRows = useMemo(() => runs.reduce((sum, r) => sum + r.rows.length, 0), [runs]);
   const totalRows = totalCasesPerModel * Math.max(1, selectedList.length);
   const progress =
@@ -466,6 +476,8 @@ export function LocalModelsShell() {
         onEnabledChange={setRunConfigEnabled}
         disabled={phase === 'running' || phase === 'scanning'}
       />
+
+      <CasesPanel disabled={phase === 'running' || phase === 'scanning'} store={caseStore} />
 
       <section className="rounded-2xl border border-border bg-bg-elevated shadow-sm">
         <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-border px-5 py-4">
