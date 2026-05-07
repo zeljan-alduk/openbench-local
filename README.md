@@ -141,6 +141,22 @@ The simplest path that sidesteps most of this is to run the page over
 plain HTTP loopback yourself — `pnpm dev` → `http://localhost:5173`.
 Mixed content evaporates and PNA does not apply.
 
+## Remote LLMs (LAN, VPN, SSH-tunnel)
+
+Running the LLM on a different machine — homelab GPU box, office
+workstation, VPN-reachable server? Three working topologies:
+
+- **LAN / VPN** — add the IP or hostname in the **Custom hosts**
+  panel; no tunnel needed.
+- **SSH** — `ssh -N -L 11434:localhost:11434 user@host` drops the
+  remote LLM onto your laptop's loopback so the page treats it as
+  `127.0.0.1` (skips mixed-content + PNA hassles in one move).
+- **Local reverse proxy** — Caddy or nginx on loopback when you
+  have several remotes or need to inject CORS / TLS-terminate.
+
+Full recipes, caveats, and security notes:
+**[`docs/remote-models.md`](docs/remote-models.md)**.
+
 ## How the eval suite works
 
 The 18 cases are inlined in
