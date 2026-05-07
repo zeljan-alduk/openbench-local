@@ -1,5 +1,5 @@
 import * as Switch from '@radix-ui/react-switch';
-import { useRef, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
 import type { InlineCase } from './builtin-suite';
 import { CaseEditModal } from './case-edit-modal';
 import { type CaseSource, useCaseStore } from './case-store';
@@ -29,9 +29,12 @@ export function CasesPanel({ disabled, store }: Props) {
     resetAll,
     appendCustom,
     setEnabled,
+    setEnabledMany,
     moveCase,
+    duplicateCase,
     allCasesForExport,
   } = store;
+  const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState(true);
   const [editing, setEditing] = useState<{ mode: 'add' | 'edit'; initial: InlineCase | null }>({
     mode: 'add',
@@ -56,6 +59,36 @@ export function CasesPanel({ disabled, store }: Props) {
   };
 
   const idIsTaken = (id: string) => effective.some((e) => e.case.id === id);
+
+  const onDuplicate = (c: InlineCase) => {
+    const newId = duplicateCase(c);
+    // Open the editor on the freshly-inserted copy so the user can
+    // rename + tweak before the next run reads it.
+    const copy: InlineCase = { ...c, id: newId };
+    setEditing({ mode: 'edit', initial: copy });
+    setEditorOpen(true);
+  };
+
+  // Search / filter. Empty query → no filtering. Otherwise: case-
+  // insensitive substring match across id, tags, evaluator kind, and
+  // the prompt body.
+  const filtered = useMemo(() => {
+    const q = filter.trim().toLowerCase();
+    if (q === '') return effective;
+    return effective.filter(({ case: c }) => {
+      if (c.id.toLowerCase().includes(q)) return true;
+      if (c.expect.kind.toLowerCase() === q) return true;
+      if (c.expect.kind.toLowerCase().includes(q)) return true;
+      if (c.tags.some((t) => t.toLowerCase().includes(q))) return true;
+      if (c.input.toLowerCase().includes(q)) return true;
+      return false;
+    });
+  }, [effective, filter]);
+
+  const onBulkEnableVisible = (on: boolean) => {
+    const ids = filtered.map((e) => e.case.id);
+    setEnabledMany(ids, on);
+  };
 
   const onExport = () => {
     const yaml = encodeCasesYaml(allCasesForExport);
@@ -157,6 +190,48 @@ export function CasesPanel({ disabled, store }: Props) {
 
       {!collapsed ? (
         <div className="px-5 py-5">
+          <div className="mb-4 flex flex-wrap items-center gap-2">
+            <div className="relative flex-1 min-w-[14rem]">
+              <input
+                type="search"
+                value={filter}
+                onChange={(e) => setFilter(e.target.value)}
+                placeholder="Search id, tag, evaluator, or prompt…"
+                className="w-full rounded-md border border-border bg-bg px-3 py-2 pl-8 text-sm text-fg placeholder:text-fg-faint"
+              />
+              <span
+                aria-hidden
+                className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-faint"
+              >
+                ⌕
+              </span>
+            </div>
+            {filter !== '' ? (
+              <span className="font-mono text-[11px] text-fg-muted">
+                {filtered.length}/{effective.length}
+              </span>
+            ) : null}
+            <button
+              type="button"
+              onClick={() => onBulkEnableVisible(true)}
+              disabled={disabled || filtered.length === 0}
+              className="rounded-md border border-border bg-bg px-2.5 py-1.5 text-[11px] font-medium text-fg hover:bg-bg-subtle disabled:opacity-50"
+              title={filter !== '' ? 'Enable every case the search matches' : 'Enable every case'}
+            >
+              Enable {filter !== '' ? 'visible' : 'all'}
+            </button>
+            <button
+              type="button"
+              onClick={() => onBulkEnableVisible(false)}
+              disabled={disabled || filtered.length === 0}
+              className="rounded-md border border-border bg-bg px-2.5 py-1.5 text-[11px] font-medium text-fg hover:bg-bg-subtle disabled:opacity-50"
+              title={
+                filter !== '' ? 'Disable every case the search matches' : 'Disable every case'
+              }
+            >
+              Disable {filter !== '' ? 'visible' : 'all'}
+            </button>
+          </div>
           <ul
             className="flex flex-col gap-1.5"
             onDragOver={(e) => e.preventDefault()}
@@ -165,7 +240,7 @@ export function CasesPanel({ disabled, store }: Props) {
               setDropOverId(null);
             }}
           >
-            {effective.map(({ case: c, source, enabled }) => (
+            {filtered.map(({ case: c, source, enabled }) => (
               <CaseRow
                 key={c.id}
                 c={c}
@@ -175,6 +250,7 @@ export function CasesPanel({ disabled, store }: Props) {
                 isDragging={draggingId === c.id}
                 isDropTarget={dropOverId === c.id && draggingId !== null && draggingId !== c.id}
                 onEdit={() => onEdit(c)}
+                onDuplicate={() => onDuplicate(c)}
                 onDelete={() => deleteCase(c.id)}
                 onReset={isBuiltin(c.id) ? () => resetCase(c.id) : null}
                 onToggleEnabled={(on) => setEnabled(c.id, on)}
@@ -204,10 +280,11 @@ export function CasesPanel({ disabled, store }: Props) {
                 }}
               />
             ))}
-            {effective.length === 0 ? (
+            {filtered.length === 0 ? (
               <p className="text-sm text-fg-muted">
-                No cases. Press <em>Add case</em> or <em>Reset all</em> to restore the built-in
-                suite.
+                {effective.length === 0
+                  ? 'No cases. Press “Add case” or “Reset all” to restore the built-in suite.'
+                  : `No cases match "${filter}".`}
               </p>
             ) : null}
           </ul>
@@ -260,6 +337,7 @@ interface CaseRowProps {
   readonly isDragging: boolean;
   readonly isDropTarget: boolean;
   readonly onEdit: () => void;
+  readonly onDuplicate: () => void;
   readonly onDelete: () => void;
   readonly onReset: (() => void) | null;
   readonly onToggleEnabled: (on: boolean) => void;
@@ -277,6 +355,7 @@ function CaseRow({
   isDragging,
   isDropTarget,
   onEdit,
+  onDuplicate,
   onDelete,
   onReset,
   onToggleEnabled,
@@ -349,6 +428,15 @@ function CaseRow({
           className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-medium text-fg hover:bg-bg-subtle disabled:opacity-50"
         >
           Edit
+        </button>
+        <button
+          type="button"
+          onClick={onDuplicate}
+          disabled={disabled}
+          title="Duplicate this case as a new custom"
+          className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-medium text-fg hover:bg-bg-subtle disabled:opacity-50"
+        >
+          Duplicate
         </button>
         {onReset !== null ? (
           <button

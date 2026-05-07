@@ -1,33 +1,79 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useMemo, useState } from 'react';
-import type { InlineCase } from './builtin-suite';
+import { useEffect, useMemo, useRef, useState } from 'react';
+import type { InlineCase, ToolSpec } from './builtin-suite';
 import { evaluateOutput } from './evaluator-direct';
 
 /**
  * Eval-case editor.
  *
- * Form layout:
- *   - Left pane: editable fields (id, prompt, evaluator, weight, tags,
- *     capability gate).
- *   - Right pane: live preview — a render of how the case will appear
- *     in the cases list, plus a "Try it" sandbox where the user pastes
- *     a sample model output and sees the evaluator decide pass / fail
- *     in real time.
+ * Left pane: editable fields (id, prompt, attachments, evaluator,
+ * weight, tags, capability gate, optional tools spec).
+ * Right pane: live row preview + "Try it" sandbox that scores a
+ * pasted sample output through the evaluator in real time.
  *
- * Edits the safe subset of `InlineCase`: contains, not_contains, regex,
- * exact, json_schema. Tool-call evaluators and image attachments are
- * preserved on round-trip but only authorable via YAML — the form
- * surfaces a notice when one is opened in edit mode.
+ * All InlineCase fields are authorable: simple evaluators (contains,
+ * not_contains, regex, exact, json_schema), tool_call evaluators
+ * (function name + args schema + tools array), and image attachments
+ * (file picker → data URL). Plain-text / code files can also be
+ * picked: their contents are appended to the prompt textarea so the
+ * user can edit before saving.
  */
 
 type EvalKind = InlineCase['expect']['kind'];
-const SIMPLE_KINDS: ReadonlyArray<Exclude<EvalKind, 'tool_call'>> = [
+const ALL_KINDS: ReadonlyArray<EvalKind> = [
   'contains',
   'not_contains',
   'regex',
   'exact',
   'json_schema',
+  'tool_call',
 ];
+const ATTACH_ACCEPT =
+  'image/png,image/jpeg,image/webp,image/gif,.txt,.md,.markdown,.json,.yaml,.yml,.csv,.xml,.html,.ts,.tsx,.js,.jsx,.py,.rb,.go,.rs,.java,.c,.cpp,.h,.sh,.toml,.ini,.log,text/*';
+
+// Size caps. These are deliberately conservative because attachments
+// land in localStorage as part of the case object, and localStorage is
+// shared by the whole origin (~5–10 MB total quota in most browsers).
+// Base64 encoding inflates by ~33% on top of the raw bytes.
+const MAX_TEXT_BYTES = 200_000; // 200 KB — typical for code/markdown excerpts
+const MAX_IMAGE_BYTES = 2_000_000; // 2 MB raw → ~2.7 MB encoded
+// Common binary extensions we explicitly reject because the OpenAI-compat
+// chat-completion endpoint local engines speak doesn't accept them. The
+// user is told to extract text first (pdf.js, SheetJS, mammoth, etc.).
+const BINARY_EXTS = new Set([
+  'pdf',
+  'doc',
+  'docx',
+  'xls',
+  'xlsx',
+  'ppt',
+  'pptx',
+  'zip',
+  'tar',
+  'gz',
+  '7z',
+  'rar',
+  'mp3',
+  'mp4',
+  'wav',
+  'm4a',
+  'flac',
+  'opus',
+  'ogg',
+  'avi',
+  'mov',
+  'mkv',
+  'webm',
+  'exe',
+  'bin',
+  'dat',
+  'sqlite',
+  'db',
+  'psd',
+  'ai',
+  'sketch',
+  'fig',
+]);
 
 interface Props {
   readonly open: boolean;
@@ -56,13 +102,30 @@ export function CaseEditModal({
   const [evalKind, setEvalKind] = useState<EvalKind>('contains');
   const [evalValue, setEvalValue] = useState('');
   const [evalSchema, setEvalSchema] = useState('');
+  // tool_call evaluator: function name + (optional) args schema JSON.
+  const [toolName, setToolName] = useState('');
+  const [toolArgsSchema, setToolArgsSchema] = useState('');
+  // Attached image: stored as a data URL so the user message can carry
+  // it inline (OpenAI-compat `image_url` content part).
+  const [imageDataUrl, setImageDataUrl] = useState<string | null>(null);
+  const [imageAlt, setImageAlt] = useState<string>('');
+  const [imageName, setImageName] = useState<string>('');
+  // Tools spec — optional per case. JSON-encoded array of OpenAI
+  // tool definitions; the runner sends them on the chat-completion
+  // request when present, even for non-tool_call evaluators (lets a
+  // contains-evaluator confirm the model produced the right answer
+  // *after* a tool round-trip).
+  const [toolsSpec, setToolsSpec] = useState('');
+  const [showToolsSpec, setShowToolsSpec] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [advancedLocked, setAdvancedLocked] = useState(false);
+  const [attachError, setAttachError] = useState<string | null>(null);
   const [sampleOutput, setSampleOutput] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setAttachError(null);
     setSampleOutput('');
     if (initial === null) {
       setId('');
@@ -73,7 +136,13 @@ export function CaseEditModal({
       setEvalKind('contains');
       setEvalValue('PASS');
       setEvalSchema('');
-      setAdvancedLocked(false);
+      setToolName('');
+      setToolArgsSchema('');
+      setImageDataUrl(null);
+      setImageAlt('');
+      setImageName('');
+      setToolsSpec('');
+      setShowToolsSpec(false);
       return;
     }
     setId(initial.id);
@@ -82,42 +151,158 @@ export function CaseEditModal({
     setTags(initial.tags.join(', '));
     setRequires(initial.requires ?? '');
     if (initial.expect.kind === 'tool_call') {
-      setAdvancedLocked(true);
-      setEvalKind('contains');
+      setEvalKind('tool_call');
       setEvalValue('');
       setEvalSchema('');
+      setToolName(initial.expect.name);
+      setToolArgsSchema(
+        initial.expect.argsSchema !== undefined
+          ? JSON.stringify(initial.expect.argsSchema, null, 2)
+          : '',
+      );
     } else if (initial.expect.kind === 'json_schema') {
       setEvalKind('json_schema');
       setEvalValue('');
       setEvalSchema(JSON.stringify(initial.expect.schema, null, 2));
-      setAdvancedLocked(initial.image !== undefined || initial.tools !== undefined);
+      setToolName('');
+      setToolArgsSchema('');
     } else {
       setEvalKind(initial.expect.kind);
       setEvalValue(initial.expect.value);
       setEvalSchema('');
-      setAdvancedLocked(initial.image !== undefined || initial.tools !== undefined);
+      setToolName('');
+      setToolArgsSchema('');
+    }
+    setImageDataUrl(initial.image?.dataUrl ?? null);
+    setImageAlt(initial.image?.alt ?? '');
+    setImageName(initial.image !== undefined ? 'attached image' : '');
+    if (initial.tools !== undefined) {
+      setToolsSpec(JSON.stringify(initial.tools, null, 2));
+      setShowToolsSpec(true);
+    } else {
+      setToolsSpec('');
+      setShowToolsSpec(false);
     }
   }, [open, initial]);
 
-  // Build the candidate `expect` clause from the form for live preview.
-  // Returns null when the user-entered config is currently invalid (e.g.
-  // unparseable schema), so the preview pane can show a hint.
-  const previewExpect = useMemo<{ ok: true; expect: InlineCase['expect'] } | { ok: false; error: string }>(() => {
-    if (advancedLocked && initial !== null) {
-      return { ok: true, expect: initial.expect };
+  /**
+   * Attachment picker handler. We branch on file kind:
+   *
+   *  - Image (image/*) → read as data URL, store in `imageDataUrl`.
+   *    Wired through to the model as an `image_url` content part.
+   *  - Text-ish file → read as UTF-8 text and append to the prompt
+   *    textarea between fences so the user can edit before saving.
+   *    There's no schema-level "file" attachment — it just becomes
+   *    part of the prompt string.
+   *
+   * Strict size caps prevent a 30MB photo from blowing the request
+   * budget and a 2GB log file from freezing the tab.
+   */
+  const onAttachFile = (file: File) => {
+    setAttachError(null);
+    const ext = file.name.toLowerCase().split('.').pop() ?? '';
+    if (BINARY_EXTS.has(ext)) {
+      setAttachError(
+        `${ext.toUpperCase()} files aren't supported by local chat-completion APIs. Extract text first (pdf.js for PDFs, SheetJS for spreadsheets, a STT endpoint for audio) and paste the result into the prompt.`,
+      );
+      return;
     }
+    if (file.type.startsWith('image/')) {
+      if (file.size > MAX_IMAGE_BYTES) {
+        setAttachError(
+          `Image too big (${(file.size / 1_000_000).toFixed(1)} MB > ${MAX_IMAGE_BYTES / 1_000_000} MB cap). Compress or resize first — base64-encoded images live in localStorage with the case.`,
+        );
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result;
+        if (typeof result === 'string') {
+          setImageDataUrl(result);
+          setImageName(file.name);
+          if (imageAlt === '') setImageAlt(file.name);
+        }
+      };
+      reader.onerror = () => setAttachError('Failed to read image.');
+      reader.readAsDataURL(file);
+      return;
+    }
+    if (file.size > MAX_TEXT_BYTES) {
+      setAttachError(
+        `File too big (${(file.size / 1000).toFixed(0)} KB > ${MAX_TEXT_BYTES / 1000} KB). Trim first.`,
+      );
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result === 'string') {
+        const fenced = `\n\n=== ${file.name} ===\n${result}\n=== /${file.name} ===\n`;
+        setInput((prev) => `${prev}${fenced}`);
+      }
+    };
+    reader.onerror = () => setAttachError('Failed to read file.');
+    reader.readAsText(file);
+  };
+
+  const onClearImage = () => {
+    setImageDataUrl(null);
+    setImageAlt('');
+    setImageName('');
+  };
+
+  // Build the candidate `expect` clause from the form for live preview.
+  // Returns an `error` variant when the user-entered config is currently
+  // invalid (e.g. unparseable schema), so the preview pane can show a hint.
+  const previewExpect = useMemo<
+    { ok: true; expect: InlineCase['expect'] } | { ok: false; error: string }
+  >(() => {
     if (evalKind === 'json_schema') {
       try {
-        return { ok: true, expect: { kind: 'json_schema', schema: JSON.parse(evalSchema || '{}') } };
+        return {
+          ok: true,
+          expect: { kind: 'json_schema', schema: JSON.parse(evalSchema || '{}') },
+        };
       } catch (e) {
         return { ok: false, error: e instanceof Error ? e.message : String(e) };
       }
     }
     if (evalKind === 'tool_call') {
-      return { ok: false, error: 'tool_call cases must be edited via YAML.' };
+      const trimmedName = toolName.trim();
+      if (trimmedName === '') {
+        return { ok: false, error: 'tool_call: function name is required.' };
+      }
+      if (toolArgsSchema.trim() === '') {
+        return { ok: true, expect: { kind: 'tool_call', name: trimmedName } };
+      }
+      try {
+        return {
+          ok: true,
+          expect: { kind: 'tool_call', name: trimmedName, argsSchema: JSON.parse(toolArgsSchema) },
+        };
+      } catch (e) {
+        return { ok: false, error: `args schema: ${e instanceof Error ? e.message : String(e)}` };
+      }
     }
     return { ok: true, expect: { kind: evalKind, value: evalValue } };
-  }, [advancedLocked, initial, evalKind, evalSchema, evalValue]);
+  }, [evalKind, evalSchema, evalValue, toolName, toolArgsSchema]);
+
+  // Tools-array preview (for the `tools` field on the case). Empty
+  // string → no tools attached.
+  const previewTools = useMemo<
+    { ok: true; tools: readonly ToolSpec[] | undefined } | { ok: false; error: string }
+  >(() => {
+    if (!showToolsSpec || toolsSpec.trim() === '') return { ok: true, tools: undefined };
+    try {
+      const parsed = JSON.parse(toolsSpec);
+      if (!Array.isArray(parsed)) {
+        return { ok: false, error: 'Tools must be a JSON array.' };
+      }
+      return { ok: true, tools: parsed as readonly ToolSpec[] };
+    } catch (e) {
+      return { ok: false, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [showToolsSpec, toolsSpec]);
 
   const liveOutcome = useMemo(() => {
     if (!previewExpect.ok) return null;
@@ -159,17 +344,21 @@ export function CaseEditModal({
     }
     if (!previewExpect.ok) return { ok: false, error: `evaluator: ${previewExpect.error}` };
     if (
-      !advancedLocked &&
       evalKind !== 'json_schema' &&
       evalKind !== 'tool_call' &&
       evalValue === ''
     ) {
       return { ok: false, error: `Evaluator "${evalKind}" needs a non-empty value.` };
     }
+    if (!previewTools.ok) return { ok: false, error: `tools: ${previewTools.error}` };
     const tagList = tags
       .split(',')
       .map((t) => t.trim())
       .filter((t) => t.length > 0);
+    const image =
+      imageDataUrl !== null
+        ? { dataUrl: imageDataUrl, ...(imageAlt.trim() !== '' ? { alt: imageAlt.trim() } : {}) }
+        : undefined;
     return {
       ok: true,
       case: {
@@ -179,8 +368,8 @@ export function CaseEditModal({
         weight: w,
         tags: tagList,
         ...(requires === '' ? {} : { requires }),
-        ...(initial?.tools !== undefined && advancedLocked ? { tools: initial.tools } : {}),
-        ...(initial?.image !== undefined && advancedLocked ? { image: initial.image } : {}),
+        ...(previewTools.tools !== undefined ? { tools: previewTools.tools } : {}),
+        ...(image !== undefined ? { image } : {}),
       },
     };
   };
@@ -250,48 +439,156 @@ export function CaseEditModal({
                   />
                 </Field>
 
-                {advancedLocked ? (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                    This case uses an advanced evaluator (tool-call) or attachment (image). Edit
-                    those fields by exporting to YAML and re-importing.
+                <Field
+                  label="attachment"
+                  hint="Image → vision content part (sets capability gate). Text/code → appended to the prompt. Binaries (PDF / Word / Excel / audio) need text extraction first."
+                >
+                  <div className="flex flex-wrap items-center gap-2">
+                    <input
+                      ref={fileInputRef}
+                      type="file"
+                      accept={ATTACH_ACCEPT}
+                      onChange={(ev) => {
+                        const file = ev.target.files?.[0];
+                        ev.target.value = '';
+                        if (file !== undefined) onAttachFile(file);
+                      }}
+                      className="hidden"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      className="rounded-md border border-border bg-bg px-3 py-2 text-sm font-medium text-fg hover:bg-bg-subtle"
+                    >
+                      Pick file…
+                    </button>
+                    {imageDataUrl !== null ? (
+                      <span className="font-mono text-[11px] text-fg-muted">
+                        Image attached: {imageName}
+                      </span>
+                    ) : (
+                      <span className="text-[11px] text-fg-faint">
+                        No image. Text-like files append to the prompt instead.
+                      </span>
+                    )}
                   </div>
-                ) : (
-                  <Field label="evaluator">
-                    <div className="flex flex-col gap-2">
-                      <select
-                        value={evalKind}
-                        onChange={(e) => setEvalKind(e.target.value as EvalKind)}
-                        className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg sm:max-w-[16rem]"
-                      >
-                        {SIMPLE_KINDS.map((k) => (
-                          <option key={k} value={k}>
-                            {k}
-                          </option>
-                        ))}
-                      </select>
-                      {evalKind === 'json_schema' ? (
-                        <textarea
-                          value={evalSchema}
-                          onChange={(e) => setEvalSchema(e.target.value)}
-                          rows={8}
-                          spellCheck={false}
-                          className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
-                          placeholder={'{\n  "type": "object",\n  "required": ["x"],\n  "properties": { "x": { "type": "number" } }\n}'}
-                        />
-                      ) : (
+                  {imageDataUrl !== null ? (
+                    <div className="mt-2 flex items-start gap-3 rounded-md border border-border bg-bg p-2">
+                      {/* biome-ignore lint/a11y/useAltText: alt set via input below */}
+                      <img
+                        src={imageDataUrl}
+                        alt={imageAlt}
+                        className="h-20 w-20 rounded object-cover"
+                      />
+                      <div className="flex flex-1 flex-col gap-1.5 text-[12px]">
                         <input
                           type="text"
-                          value={evalValue}
-                          onChange={(e) => setEvalValue(e.target.value)}
-                          spellCheck={false}
-                          className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
-                          placeholder={evalKind === 'regex' ? '^PASS$' : 'PASS'}
+                          value={imageAlt}
+                          onChange={(e) => setImageAlt(e.target.value)}
+                          placeholder="alt text (optional)"
+                          className="w-full rounded-md border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg"
                         />
-                      )}
-                      <p className="text-[11px] text-fg-muted">{evalKindHint(evalKind)}</p>
+                        <button
+                          type="button"
+                          onClick={onClearImage}
+                          className="self-start rounded-md border border-border bg-bg px-2 py-1 text-[11px] font-medium text-danger hover:bg-danger/10"
+                        >
+                          Remove image
+                        </button>
+                      </div>
                     </div>
-                  </Field>
-                )}
+                  ) : null}
+                  {attachError !== null ? (
+                    <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+                      {attachError}
+                    </p>
+                  ) : null}
+                </Field>
+
+                <Field label="evaluator">
+                  <div className="flex flex-col gap-2">
+                    <select
+                      value={evalKind}
+                      onChange={(e) => setEvalKind(e.target.value as EvalKind)}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg sm:max-w-[16rem]"
+                    >
+                      {ALL_KINDS.map((k) => (
+                        <option key={k} value={k}>
+                          {k}
+                        </option>
+                      ))}
+                    </select>
+                    {evalKind === 'json_schema' ? (
+                      <textarea
+                        value={evalSchema}
+                        onChange={(e) => setEvalSchema(e.target.value)}
+                        rows={8}
+                        spellCheck={false}
+                        className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
+                        placeholder={'{\n  "type": "object",\n  "required": ["x"],\n  "properties": { "x": { "type": "number" } }\n}'}
+                      />
+                    ) : evalKind === 'tool_call' ? (
+                      <div className="flex flex-col gap-2">
+                        <input
+                          type="text"
+                          value={toolName}
+                          onChange={(e) => setToolName(e.target.value)}
+                          spellCheck={false}
+                          placeholder="function name (e.g. get_weather)"
+                          className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
+                        />
+                        <textarea
+                          value={toolArgsSchema}
+                          onChange={(e) => setToolArgsSchema(e.target.value)}
+                          rows={5}
+                          spellCheck={false}
+                          placeholder="(optional) args JSON schema"
+                          className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
+                        />
+                        <p className="text-[11px] text-amber-700 dark:text-amber-400">
+                          Don't forget the tools spec below — without it the model has nothing to
+                          call.
+                        </p>
+                      </div>
+                    ) : (
+                      <input
+                        type="text"
+                        value={evalValue}
+                        onChange={(e) => setEvalValue(e.target.value)}
+                        spellCheck={false}
+                        className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
+                        placeholder={evalKind === 'regex' ? '^PASS$' : 'PASS'}
+                      />
+                    )}
+                    <p className="text-[11px] text-fg-muted">{evalKindHint(evalKind)}</p>
+                  </div>
+                </Field>
+
+                <details
+                  open={showToolsSpec}
+                  onToggle={(ev) => setShowToolsSpec((ev.target as HTMLDetailsElement).open)}
+                  className="rounded-md border border-border bg-bg p-3"
+                >
+                  <summary className="cursor-pointer select-none text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                    Tools spec (advanced)
+                  </summary>
+                  <p className="mt-2 text-[11px] text-fg-faint">
+                    JSON array of OpenAI-shape tool definitions. Sent on the chat-completion
+                    request when present. Required for <code>tool_call</code> evaluators; optional
+                    for everything else.
+                  </p>
+                  <textarea
+                    value={toolsSpec}
+                    onChange={(e) => setToolsSpec(e.target.value)}
+                    rows={8}
+                    spellCheck={false}
+                    className="mt-2 w-full resize-y rounded-md border border-border bg-bg-elevated px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
+                    placeholder={'[\n  {\n    "type": "function",\n    "function": {\n      "name": "get_weather",\n      "description": "Look up current weather",\n      "parameters": { "type": "object", "properties": { "city": { "type": "string" } }, "required": ["city"] }\n    }\n  }\n]'}
+                  />
+                  {!previewTools.ok ? (
+                    <p className="mt-1 text-[11px] text-danger">{previewTools.error}</p>
+                  ) : null}
+                </details>
 
                 <div className="grid gap-4 sm:grid-cols-3">
                   <Field label="weight">

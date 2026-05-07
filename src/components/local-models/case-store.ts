@@ -269,6 +269,57 @@ export function useCaseStore() {
     [state, persist, isBuiltin],
   );
 
+  /**
+   * Mint a unique id to seed a "Duplicate" action. Appends `-copy`,
+   * then `-copy-2`, `-copy-3` … until we find one not in use.
+   */
+  const mintCopyId = useCallback(
+    (sourceId: string): string => {
+      const base = sourceId.replace(/-copy(?:-\d+)?$/, '');
+      const taken = new Set([
+        ...LOCAL_MODEL_RATING_SUITE.cases.map((c) => c.id),
+        ...state.custom.map((c) => c.id),
+      ]);
+      const first = `${base}-copy`;
+      if (!taken.has(first)) return first;
+      for (let i = 2; i < 1000; i++) {
+        const candidate = `${base}-copy-${i}`;
+        if (!taken.has(candidate)) return candidate;
+      }
+      // Practically unreachable.
+      return `${base}-copy-${Date.now()}`;
+    },
+    [state.custom],
+  );
+
+  /**
+   * Insert a copy of an existing case as a new custom case. Returns
+   * the new id so the caller can immediately open the editor on it.
+   */
+  const duplicateCase = useCallback(
+    (source: InlineCase): string => {
+      const newId = mintCopyId(source.id);
+      const copy: InlineCase = { ...source, id: newId };
+      persist({ ...state, custom: [...state.custom, copy] });
+      return newId;
+    },
+    [state, persist, mintCopyId],
+  );
+
+  /** Bulk-toggle a list of ids — used by the "enable/disable visible" buttons. */
+  const setEnabledMany = useCallback(
+    (ids: readonly string[], on: boolean) => {
+      if (ids.length === 0) return;
+      const next = new Set(state.disabled);
+      for (const id of ids) {
+        if (on) next.delete(id);
+        else next.add(id);
+      }
+      persist({ ...state, disabled: [...next] });
+    },
+    [state, persist],
+  );
+
   return {
     hydrated,
     effective,
@@ -283,7 +334,9 @@ export function useCaseStore() {
     resetCase,
     resetAll,
     setEnabled,
+    setEnabledMany,
     moveCase,
+    duplicateCase,
     replaceAllWithCustom,
     appendCustom,
   };
