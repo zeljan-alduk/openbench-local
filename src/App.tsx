@@ -1,8 +1,10 @@
 import { LocalModelsShell } from './components/local-models/local-models-shell';
+import { StorageNotice } from './components/storage-notice';
 
 export function App() {
   return (
     <div className="relative overflow-hidden">
+      <StorageNotice />
       <div aria-hidden className="aldo-hero-blob print:hidden" />
       <PrintHeader />
       <div className="relative mx-auto max-w-6xl px-4 py-12 sm:px-6 sm:py-16">
