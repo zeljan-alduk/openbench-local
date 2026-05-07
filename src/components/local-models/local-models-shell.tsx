@@ -308,11 +308,22 @@ export function LocalModelsShell() {
   const retryCase = useCallback(
     async (modelKeyTarget: string, caseId: string) => {
       const c = effectiveSuite.cases.find((x) => x.id === caseId);
-      if (c === undefined) return;
+      if (c === undefined) {
+        // Most likely cause: user deleted / disabled / hidden the case
+        // from the panel after the bench completed. Surface the reason
+        // so the click isn't a silent no-op.
+        setRunError(
+          `Retry: case "${caseId}" is no longer in the active suite (deleted or disabled). Re-enable it in the Eval cases panel and try again.`,
+        );
+        return;
+      }
       const target = runs.find(
         (r) => `${r.model.source}::${r.model.id}::${r.model.port}` === modelKeyTarget,
       );
-      if (target === undefined) return;
+      if (target === undefined) {
+        setRunError(`Retry: model state lost — start a fresh run.`);
+        return;
+      }
       try {
         const fresh = await runSingleCase({
           case: c,
