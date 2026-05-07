@@ -65,6 +65,23 @@ pnpm dev
 
 Open http://localhost:5173.
 
+### Docker
+
+Prefer not to install Node? Build the image and run nginx:
+
+```bash
+docker build -t openbench-local .
+docker run --rm -p 8080:80 openbench-local
+```
+
+Open http://localhost:8080. The container only serves the static
+bundle — your browser does *all* LLM traffic itself, directly to the
+host's `127.0.0.1`, so no `--network=host` flag or `host.docker.internal`
+plumbing is required.
+
+The published image `ghcr.io/zeljan-alduk/openbench-local:latest` is
+built and pushed by CI on every merge to `main` (planned).
+
 Then start at least one local LLM server:
 
 | Engine     | Default port | One-line start                                |
