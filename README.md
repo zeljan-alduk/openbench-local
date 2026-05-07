@@ -67,20 +67,43 @@ Open http://localhost:5173.
 
 ### Docker
 
-Prefer not to install Node? Build the image and run nginx:
+Prefer not to install Node? Three options:
+
+**1. Pull the published image** (built by CI on every merge to `main`,
+multi-arch `linux/amd64` + `linux/arm64`):
+
+```bash
+docker run --rm -p 8080:80 ghcr.io/zeljan-alduk/openbench-local:latest
+```
+
+**2. `docker compose up`** — uses the same image, adds a healthcheck
+and `restart: unless-stopped`:
+
+```bash
+docker compose up -d
+```
+
+**3. Build from source** (no Node needed on the host):
 
 ```bash
 docker build -t openbench-local .
 docker run --rm -p 8080:80 openbench-local
 ```
 
-Open http://localhost:8080. The container only serves the static
-bundle — your browser does *all* LLM traffic itself, directly to the
-host's `127.0.0.1`, so no `--network=host` flag or `host.docker.internal`
-plumbing is required.
+Then open http://localhost:8080.
 
-The published image `ghcr.io/zeljan-alduk/openbench-local:latest` is
-built and pushed by CI on every merge to `main` (planned).
+The container only serves the static bundle — your browser does *all*
+LLM traffic itself, directly to the host's `127.0.0.1`, so no
+`--network=host` flag or `host.docker.internal` plumbing is required.
+
+Image tags published to `ghcr.io/zeljan-alduk/openbench-local`:
+
+| Tag | Source |
+| --- | --- |
+| `latest`        | tip of `main` |
+| `main`          | tip of `main` (alias) |
+| `sha-<short>`   | every push to `main` |
+| `v1.2.3`, `1.2`, `1` | git tag `v1.2.3` |
 
 Then start at least one local LLM server:
 

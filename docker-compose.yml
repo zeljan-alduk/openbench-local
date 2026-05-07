@@ -1,0 +1,26 @@
+# One-liner self-host:
+#
+#   docker compose up -d
+#
+# Pulls the published image from GHCR and serves the SPA on :8080.
+# To rebuild from source instead (uncomment `build:` and remove
+# `image:` / `pull_policy:`), run `docker compose up --build`.
+#
+# The browser does all LLM traffic itself, directly to the host's
+# 127.0.0.1, so no special networking flags are required — the
+# container is just a static-asset server.
+
+services:
+  openbench-local:
+    image: ghcr.io/zeljan-alduk/openbench-local:latest
+    pull_policy: always
+    # build: .              # uncomment to build locally instead
+    container_name: openbench-local
+    ports:
+      - "8080:80"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3

@@ -1,0 +1,71 @@
+name: Container — build & publish to GHCR
+
+# On every push to `main` (and on git-tag pushes, e.g. v0.1.0) build a
+# multi-arch (linux/amd64 + linux/arm64) container image and publish
+# it to GitHub Container Registry. Tagging strategy via
+# docker/metadata-action:
+#   push main           → :latest, :main, :sha-<short>
+#   push tag v1.2.3     → :v1.2.3, :1.2, :1, :sha-<short>
+#   workflow_dispatch   → :sha-<short>
+#
+# Authentication uses the built-in GITHUB_TOKEN; no PAT required.
+# The package inherits the repo's visibility (public).
+
+on:
+  push:
+    branches: [main]
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: container-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    name: Build & push image
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # QEMU enables building the arm64 layer on the amd64 runner.
+      - uses: docker/setup-qemu-action@v3
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute image tags & labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/${{ github.repository }}
+          tags: |
+            type=ref,event=branch
+            type=ref,event=tag
+            type=sha,format=short
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=openbench-local
+            org.opencontainers.image.description=Discover & benchmark local LLMs in your browser
+            org.opencontainers.image.licenses=MIT
+
+      - name: Build & push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          platforms: linux/amd64,linux/arm64
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          # GHA cache shrinks rebuild time from ~2 min to ~20 s.
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
