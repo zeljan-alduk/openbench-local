@@ -83,6 +83,29 @@ Per-model overrides are available too — gear icon on a model card.
 Precedence: global panel wins for any field it sets, per-model overrides
 fill in the rest.
 
+## Custom eval cases
+
+Click **Eval cases** in the panel between Setup and Run. From there you
+can:
+
+- **Edit any built-in case** — change the prompt, evaluator, weight,
+  or tags. Edits are stored in your browser only.
+- **Hide cases you don't care about** — the runner skips them entirely.
+- **Add your own custom cases** — same shape as the built-ins. Five
+  evaluator kinds are available in the form: `contains`,
+  `not_contains`, `regex`, `exact`, `json_schema`. Tool-call evaluators
+  and image attachments are preserved on round-trip but only authorable
+  via YAML.
+- **Export everything to YAML** — share your suite with a teammate, or
+  back it up.
+- **Import YAML** — drop in a `.yaml` file with a list of cases (our
+  wrapper shape, a bare list, or a `{ suite: { cases } }` block all
+  work).
+- **Reset all** — restores the 18 built-in defaults.
+
+State lives in `localStorage` under `openbench-local:cases`. Nothing is
+uploaded.
+
 ## Build for production
 
 ```bash
@@ -94,6 +117,53 @@ Netlify, Cloudflare Pages, S3, or just `npx serve dist`.
 
 `vite.config.ts` sets `base: './'` so the build is portable to any
 sub-path on a parent domain.
+
+## CI / CD
+
+Two GitHub Actions workflows handle the development cycle:
+
+- **`.github/workflows/ci.yml`** — typecheck + production build on every
+  push and pull request. Uploads `dist/` as a workflow artifact.
+- **`.github/workflows/pages.yml`** — deploys to GitHub Pages.
+  - `push` to `main` → `gh-pages/` root → served at
+    `https://zeljan-alduk.github.io/openbench-local/`.
+  - `pull_request` → `gh-pages/pr-<N>/` → served at
+    `https://zeljan-alduk.github.io/openbench-local/pr-<N>/`.
+
+  A sticky comment on the PR carries both URLs and refreshes on every
+  push to the branch.
+
+- **`.github/workflows/pr-cleanup.yml`** — when a PR closes (merged or
+  not), removes the `pr-<N>/` folder from `gh-pages` so previews don't
+  accumulate.
+
+### How the dev cycle looks in practice
+
+```
+git checkout -b feat/new-eval-case
+# edit files…
+git push -u origin feat/new-eval-case
+gh pr create --fill
+```
+
+CI runs typecheck + build. If it passes, the Pages workflow publishes
+a preview at `https://zeljan-alduk.github.io/openbench-local/pr-<N>/`
+and posts a comment on the PR. Reviewers click through, exercise the
+build, and request changes. On merge, production updates; on close,
+the preview folder is deleted.
+
+This pattern — per-PR preview URL, sticky comment, auto-cleanup — is
+the standard frontend OSS dev cycle. Managed services like Vercel,
+Netlify, and Cloudflare Pages do it natively; we get the same
+ergonomics out of plain GitHub Pages.
+
+### One-time repo setup
+
+After cloning, enable GitHub Pages in the repo settings:
+
+1. **Settings → Pages → Source** — pick "Deploy from a branch".
+2. **Branch** — `gh-pages` (it'll appear after the first deploy lands).
+3. The site auto-publishes on every push to `main`.
 
 ## Project structure
 
