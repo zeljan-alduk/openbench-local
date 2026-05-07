@@ -9,6 +9,13 @@ on:
   pull_request:
     branches: [main]
 
+# Force every JavaScript-flavoured action (checkout, setup-node,
+# action-setup, upload-artifact …) onto the Node 24 runtime. Without
+# this, the runner still warms them on Node 20, which is deprecated
+# and slated for removal in Sep 2026.
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   build:
     name: typecheck + build
@@ -23,7 +30,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies

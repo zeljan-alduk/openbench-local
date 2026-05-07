@@ -3,10 +3,10 @@
 # ──────────────────────────────────────────────────────────────────
 # Build stage — produces the static dist/ tree.
 #
-# Node 22 because Corepack auto-pulls the latest pnpm (currently v11)
-# which requires Node ≥ 22.13. Alpine keeps the build image small.
+# Node 24 to stay on the current LTS line and match the GitHub
+# Actions setup-node version. Alpine keeps the build image small.
 # ──────────────────────────────────────────────────────────────────
-FROM node:22-alpine AS build
+FROM node:24-alpine AS build
 WORKDIR /app
 
 RUN corepack enable

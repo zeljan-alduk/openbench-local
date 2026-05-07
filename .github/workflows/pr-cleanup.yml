@@ -12,6 +12,10 @@ permissions:
   contents: write
   pull-requests: write
 
+# Run third-party JS actions on Node 24 (Node 20 is deprecated).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   cleanup:
     name: Remove pr-${{ github.event.pull_request.number }}

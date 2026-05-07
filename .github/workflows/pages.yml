@@ -27,6 +27,10 @@ concurrency:
   group: pages-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Run third-party JS actions on Node 24 (Node 20 is deprecated).
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 permissions:
   contents: write          # peaceiris pushes to gh-pages
   pull-requests: write     # post preview-URL comment on PRs
@@ -43,7 +47,7 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 24
           cache: pnpm
 
       - name: Install dependencies
