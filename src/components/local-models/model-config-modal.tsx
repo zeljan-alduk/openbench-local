@@ -15,6 +15,7 @@ import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useState } from 'react';
 import type { RunConfig } from './bench-direct';
 import type { DiscoveredLocalModel } from './discovery-direct';
+import { type PulledDefaults, pullEngineDefaults } from './engine-defaults';
 
 interface Props {
   readonly open: boolean;
@@ -38,14 +39,36 @@ export function ModelConfigModal({
   // Local draft state so unsaved edits don't pollute the persisted
   // map until the user clicks Save.
   const [draft, setDraft] = useState<RunConfig>(override ?? {});
+  const [pulling, setPulling] = useState(false);
+  const [pulled, setPulled] = useState<PulledDefaults | null>(null);
 
   // Reset draft when the modal opens for a different model, or when
   // the upstream override changes (parent might have cleared it).
   useEffect(() => {
-    if (open) setDraft(override ?? {});
+    if (open) {
+      setDraft(override ?? {});
+      setPulled(null);
+    }
   }, [open, override]);
 
   if (model === null) return null;
+
+  const onPull = async () => {
+    if (model === null) return;
+    setPulling(true);
+    try {
+      const result = await pullEngineDefaults(model);
+      setPulled(result);
+      // Merge pulled sampling defaults into the draft for fields that
+      // were previously unset. We don't overwrite existing user edits
+      // — the goal is to seed, not stomp.
+      if (result.ok) {
+        setDraft((prev) => ({ ...result.runConfig, ...prev }));
+      }
+    } finally {
+      setPulling(false);
+    }
+  };
 
   const fallback = (key: keyof RunConfig, fallbackValue: number | string | boolean): string => {
     const v = globalConfig[key];
@@ -74,6 +97,24 @@ export function ModelConfigModal({
                 — values here only apply for fields the global panel leaves unset. Saved settings
                 persist across sessions.
               </p>
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    void onPull();
+                  }}
+                  disabled={pulling || model.source === 'vllm'}
+                  title={
+                    model.source === 'vllm'
+                      ? "vLLM doesn't expose runtime defaults via API"
+                      : 'Read this model’s sampling defaults straight from the engine'
+                  }
+                  className="rounded border border-border bg-bg px-3 py-1.5 text-[12px] font-medium text-fg hover:border-accent hover:text-accent disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {pulling ? 'Pulling…' : 'Pull from engine'}
+                </button>
+                {pulled !== null ? <PulledSummary pulled={pulled} /> : null}
+              </div>
             </div>
             <Dialog.Close asChild>
               <button
@@ -210,6 +251,34 @@ export function ModelConfigModal({
                 className="mt-1 w-full rounded border border-border bg-bg px-3 py-2 font-mono text-[12px] text-fg placeholder:text-fg-faint focus:border-accent focus:outline-none"
               />
             </div>
+
+            {pulled !== null && Object.keys(pulled.extras).length > 0 ? (
+              <div className="sm:col-span-2">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                  Load-time settings (read from engine)
+                </p>
+                <p className="mt-1 text-[11px] text-fg-faint">
+                  These describe how the model is loaded (context length, GPU offload, KV cache,
+                  RoPE, batch size…) and live entirely on the engine side. The OpenAI-compat
+                  chat API can't change them — set them in the engine itself (LM Studio "Load
+                  with custom config", Ollama Modelfile / `ollama run` flags, vLLM /
+                  llama.cpp launch args).
+                </p>
+                <ul className="mt-2 grid grid-cols-1 gap-1.5 sm:grid-cols-2">
+                  {Object.entries(pulled.extras).map(([k, v]) => (
+                    <li
+                      key={k}
+                      className="flex items-center justify-between gap-2 rounded border border-border bg-bg px-2 py-1 font-mono text-[11px]"
+                    >
+                      <span className="text-fg-muted">{k}</span>
+                      <span className="truncate text-fg" title={String(v)}>
+                        {String(v)}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            ) : null}
           </div>
 
           <footer className="flex items-center justify-between gap-3 border-t border-border px-5 py-3">
@@ -247,6 +316,56 @@ export function ModelConfigModal({
       </Dialog.Portal>
     </Dialog.Root>
   );
+}
+
+function PulledSummary({ pulled }: { pulled: PulledDefaults }) {
+  if (pulled.error !== undefined) {
+    return (
+      <span className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+        Pull failed: {pulled.error}
+      </span>
+    );
+  }
+  if (!pulled.ok && pulled.note !== undefined) {
+    return (
+      <span className="rounded-md border border-amber-500/30 bg-amber-500/5 px-2 py-1 text-[11px] text-amber-700 dark:text-amber-400">
+        {pulled.note}
+      </span>
+    );
+  }
+  const sampled = Object.entries(pulled.runConfig)
+    .map(([k, v]) => `${labelFor(k)}=${String(v)}`)
+    .join(' · ');
+  if (sampled === '') {
+    return (
+      <span className="rounded-md border border-border bg-bg px-2 py-1 text-[11px] text-fg-muted">
+        Engine returned no sampling defaults.
+        {pulled.note !== undefined ? ` ${pulled.note}` : ''}
+      </span>
+    );
+  }
+  return (
+    <span className="rounded-md border border-emerald-500/30 bg-emerald-500/5 px-2 py-1 text-[11px] text-emerald-700 dark:text-emerald-400">
+      Pulled: {sampled}
+    </span>
+  );
+}
+
+function labelFor(key: string): string {
+  switch (key) {
+    case 'temperature':
+      return 'temp';
+    case 'topP':
+      return 'top_p';
+    case 'maxTokens':
+      return 'max_tokens';
+    case 'systemPrompt':
+      return 'system';
+    case 'reasoningEffort':
+      return 'reasoning';
+    default:
+      return key;
+  }
 }
 
 function NumField({

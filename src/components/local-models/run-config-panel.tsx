@@ -350,7 +350,11 @@ export function useStoredRunConfigEnabled(): {
   enabled: boolean;
   setEnabled: (next: boolean) => void;
 } {
-  const [enabled, setEnabledState] = useState<boolean>(true);
+  // Default OFF: per-model defaults (and the engine's own defaults
+  // for fields the user leaves unset there) win. Users opt into the
+  // global override deliberately when they want to force the same
+  // params across every model regardless of per-model setup.
+  const [enabled, setEnabledState] = useState<boolean>(false);
   useEffect(() => {
     if (typeof window === 'undefined') return;
     try {
