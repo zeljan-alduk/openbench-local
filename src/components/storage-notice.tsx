@@ -45,13 +45,14 @@ export function StorageNotice() {
         <div className="flex-1 text-sm text-fg">
           <p className="font-medium">This site stores your settings locally in your browser.</p>
           <p className="mt-1 text-fg-muted">
-            Discovered hosts, generation parameters, and custom eval cases are saved to{' '}
+            Discovered hosts, generation parameters, custom eval cases, and any API keys you set
+            are saved to{' '}
             <code className="rounded bg-bg-subtle px-1 py-0.5 font-mono text-[12px]">
               localStorage
-            </code>
-            . Nothing is sent to a server — all benchmarking traffic stays between your browser and{' '}
-            <span className="font-mono text-fg">127.0.0.1</span>. No cookies, no tracking, no
-            analytics.
+            </code>{' '}
+            in plain text. Nothing is sent to a server — all benchmarking traffic stays between
+            your browser and <span className="font-mono text-fg">127.0.0.1</span> (or the LLM
+            hosts you've added). No cookies, no tracking, no analytics.
           </p>
         </div>
         <button

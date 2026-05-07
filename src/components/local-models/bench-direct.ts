@@ -15,8 +15,25 @@
  * browser and `127.0.0.1:<port>`.
  */
 
+import { readApiKey } from './auth-store';
 import type { InlineCase, InlineSuite } from './builtin-suite';
 import { type EvalOutcome, evaluateRow } from './evaluator-direct';
+
+/**
+ * Pull the optional Bearer token for whichever host:port the chat
+ * URL resolves to. Returns an empty headers object when the user
+ * hasn't set a key for that endpoint.
+ */
+function authHeadersFor(chatBaseUrl: string): Record<string, string> {
+  try {
+    const u = new URL(chatBaseUrl);
+    const port = Number(u.port) || (u.protocol === 'https:' ? 443 : 80);
+    const key = readApiKey(u.hostname, port);
+    return key !== null ? { authorization: `Bearer ${key}` } : {};
+  } catch {
+    return {};
+  }
+}
 
 /** Single tool-call emitted by the model in the SSE stream. */
 export interface CapturedToolCall {
@@ -420,7 +437,7 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
 
   const res = await fetch(url, {
     method: 'POST',
-    headers: { 'content-type': 'application/json' },
+    headers: { 'content-type': 'application/json', ...authHeadersFor(ctx.chatBaseUrl) },
     mode: 'cors',
     body: JSON.stringify(body),
     ...(ctx.signal !== undefined ? { signal: ctx.signal } : {}),
@@ -570,7 +587,7 @@ async function warmUpModel(opts: {
   try {
     const res = await fetch(url, {
       method: 'POST',
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', ...authHeadersFor(opts.chatBaseUrl) },
       mode: 'cors',
       body: JSON.stringify({
         model: opts.modelId,

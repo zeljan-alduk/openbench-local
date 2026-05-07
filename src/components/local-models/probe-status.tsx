@@ -158,6 +158,8 @@ function describe(p: DiscoveryProbeResult | undefined): {
   switch (p.reason) {
     case 'fetch_failed':
       return { kind: 'fail', label: 'no response · CORS?' };
+    case 'unauthorized':
+      return { kind: 'warn', label: `HTTP ${p.httpStatus ?? 401} · API key needed` };
     case 'http_error':
       return { kind: 'warn', label: `HTTP ${p.httpStatus ?? '?'}` };
     case 'parse_error':

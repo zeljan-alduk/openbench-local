@@ -27,6 +27,8 @@
  * (localhost:11434).
  */
 
+import { readApiKey } from './auth-store';
+
 export type DiscoverySource = 'ollama' | 'lmstudio' | 'vllm' | 'llamacpp';
 
 export interface DiscoveredLocalModel {
@@ -50,7 +52,7 @@ export interface DiscoveryProbeResult {
   readonly ok: boolean;
   readonly models: readonly DiscoveredLocalModel[];
   /** When `ok=false`, why. `'fetch_failed'` covers CORS + closed-port + network. */
-  readonly reason?: 'fetch_failed' | 'http_error' | 'parse_error' | 'empty';
+  readonly reason?: 'fetch_failed' | 'http_error' | 'unauthorized' | 'parse_error' | 'empty';
   readonly httpStatus?: number;
 }
 
@@ -286,11 +288,17 @@ async function probeOneFromSpec(
   signal: AbortSignal,
 ): Promise<DiscoveryProbeResult> {
   const { fetchUrl, displayBaseUrl, chatBaseUrl, port } = probeUrlFor(spec, parsed);
+  // Inject Authorization when the user has a stored key for this
+  // host:port — covers LM Studio's API-key mode, vLLM `--api-key`,
+  // llama.cpp `--api-key`, and any reverse proxy fronting the engine.
+  const apiKey = readApiKey(parsed.host, port);
+  const headers: Record<string, string> = { accept: 'application/json' };
+  if (apiKey !== null) headers.authorization = `Bearer ${apiKey}`;
   let res: Response;
   try {
     res = await fetch(fetchUrl, {
       method: 'GET',
-      headers: { accept: 'application/json' },
+      headers,
       mode: 'cors',
       signal,
     });
@@ -305,13 +313,18 @@ async function probeOneFromSpec(
     };
   }
   if (!res.ok) {
+    // 401/403 = engine is reachable but rejected our credentials
+    // (or absence of them). Distinct reason so the panel can surface
+    // a "needs API key" hint instead of a generic "http error".
+    const reason: DiscoveryProbeResult['reason'] =
+      res.status === 401 || res.status === 403 ? 'unauthorized' : 'http_error';
     return {
       source: spec.source,
       host: parsed.host,
       port,
       ok: false,
       models: [],
-      reason: 'http_error',
+      reason,
       httpStatus: res.status,
     };
   }

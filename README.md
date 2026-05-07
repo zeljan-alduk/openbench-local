@@ -324,6 +324,46 @@ openbench-local/
 
 ## Advanced
 
+### API keys (LM Studio, vLLM, llama.cpp, reverse proxies)
+
+Some local engines and any reverse proxy in front of one require an
+`Authorization: Bearer <key>` header on every request. Recent
+versions support this natively:
+
+| Engine | How to enable | Where the key is set |
+| --- | --- | --- |
+| **LM Studio** | Server settings → "Require API key" | Settings tab |
+| **vLLM** | `vllm serve <model> --api-key sk-…` | CLI flag |
+| **llama.cpp** | `llama-server -m <gguf> --api-key sk-…` | CLI flag |
+| **Ollama** | No native auth — front it with nginx / Caddy + basic-auth or a Bearer middleware | Reverse proxy config |
+
+`openbench-local` has a dedicated **API keys** panel (right under
+Custom hosts on the page). Each entry is a `host:port → key` pair;
+the key is sent on:
+
+- Every discovery probe (so an authed engine actually shows up
+  instead of failing the probe with `HTTP 401 · API key needed`)
+- Every chat-completion request the bench runner sends to that host
+- The pre-bench warm-up call
+
+Storage:
+
+- Keys live in `localStorage` under `openbench-local:auth` in
+  **plain text**, same as every other preference. The storage
+  notice surfaces this so users can decide whether the keys they
+  paste in are appropriate for that.
+- Keys are **never** included in exported reports (Markdown / JSON /
+  interactive HTML), copied into URLs, or logged to console.
+- The display in the panel is masked (`sk-•••…•••3f7a`); the
+  textarea uses `type="password"` so screen-recorders / shoulder-
+  surfers don't catch it.
+
+If you need stronger protection than localStorage offers — shared
+machine, untrusted browser extensions, etc. — front the engine with a
+reverse proxy that handles auth out-of-band (mTLS, OAuth proxy,
+Tailscale Funnel with ACLs, etc.) instead of giving the browser a
+long-lived Bearer token.
+
 ### Remote LLMs (LAN, VPN, SSH-tunnel)
 
 Running the LLM on a different machine — homelab GPU box, office

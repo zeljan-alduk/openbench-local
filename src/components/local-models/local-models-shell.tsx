@@ -39,6 +39,7 @@ import { inferCapabilities } from './capabilities';
 import { useCaseStore } from './case-store';
 import { CasesPanel } from './cases-panel';
 import { CorsHelpPanel } from './cors-help-panel';
+import { ApiKeysPanel } from './api-keys-panel';
 import { CustomHostsPanel, useStoredHosts } from './custom-hosts-panel';
 import {
   type DiscoverDirectResult,
@@ -456,6 +457,7 @@ export function LocalModelsShell() {
             onChange={setExtraHosts}
             disabled={phase === 'running' || phase === 'scanning'}
           />
+          <ApiKeysPanel disabled={phase === 'running' || phase === 'scanning'} />
           {tipSources.length > 0 ? (
             <div className="flex flex-col gap-2 print:hidden">
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
