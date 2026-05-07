@@ -44,17 +44,31 @@ Then start at least one local LLM server:
 The page auto-discovers each one. The first model is auto-selected; tap
 more cards to compare side-by-side.
 
-## CORS — read this first
+## Browser permissions — read this first
 
-Browsers block cross-origin requests by default. From an HTTPS page,
-hitting `http://127.0.0.1:11434` is technically a mixed-content +
-cross-origin request. The page surfaces an inline help panel with
-copy-pasteable per-engine config (`OLLAMA_ORIGINS`, LM Studio's CORS
-toggle, vLLM `--allowed-origins`, llama.cpp `--cors`) when probes fail.
+Browsers intentionally restrict an HTTPS page from talking to local
+servers. Whether openbench-local works out of the box depends on four
+things, none of which are about the app itself:
 
-If you run the page from `http://localhost:5173` (the default
-`pnpm dev` URL), most engines work out of the box because the origin
-is loopback HTTP.
+1. **Mixed content** — can the HTTPS page reach `http://...`?
+2. **CORS** — does the LLM server allow this origin?
+3. **Private Network Access (PNA)** — does Chrome require an extra
+   preflight for private-IP fetches? (yes, since v117)
+4. **Browser-level toggles** — flags / shields / Develop-menu
+   options.
+
+The page surfaces an inline panel with copy-pasteable per-engine CORS
+config (`OLLAMA_ORIGINS`, LM Studio's CORS toggle, vLLM
+`--allowed-origins`, llama.cpp `--cors`) when probes fail.
+
+For step-by-step manual instructions per browser (Chrome / Edge /
+Brave, Firefox, Safari, mobile), including PNA flags, Brave Shields,
+and Safari's mixed-content workaround, see
+**[`docs/browser-permissions.md`](docs/browser-permissions.md)**.
+
+The simplest path that sidesteps most of this is to run the page over
+plain HTTP loopback yourself — `pnpm dev` → `http://localhost:5173`.
+Mixed content evaporates and PNA does not apply.
 
 ## How the eval suite works
 
