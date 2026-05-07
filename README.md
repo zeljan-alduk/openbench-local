@@ -324,6 +324,64 @@ openbench-local/
 
 ## Advanced
 
+### Per-model overrides & engine defaults
+
+Each discovered model has a gear icon → **per-model config** modal
+with a **Pull from engine** button. The modal has two distinct
+surfaces with different rules.
+
+#### Form fields (editable, take effect per request)
+
+`temperature`, `top_p`, `max_tokens`, `seed`, `reasoning_effort`,
+`warm-up ping`, `system_prompt`.
+
+- ✅ Editable in the browser.
+- ✅ **Sent on every** `POST /v1/chat/completions` and **honoured by
+  the engine for that request only.**
+- The engine's loaded defaults are overridden *just for the requests
+  openbench-local makes*. Other clients (LM Studio's chat UI, Ollama
+  Open WebUI, your own scripts) keep using the engine-side defaults
+  — we never touch the engine's persistent config.
+
+#### Read-only "Load-time settings" (display only)
+
+`num_ctx`, GPU offload, KV cache, RoPE frequency, batch size,
+`top_k`, `repeat_penalty`, `mirostat`, `quantization`, `arch`, etc.
+
+- ❌ Not editable in the browser.
+- ❌ Wouldn't take effect even if they were — the OpenAI-compat
+  `/v1/chat/completions` body **has no fields for them**. Reloading
+  the model is the only way to change them, and that's an engine-
+  side decision.
+- Configure them where the engine wants: LM Studio "Load with custom
+  config", Ollama `Modelfile` / `ollama run` flags, vLLM / llama.cpp
+  launch args.
+
+#### Precedence chain (per request)
+
+For each parameter we send:
+
+1. **Per-model override** (gear modal) — wins if set.
+2. **Global override** (Setup panel, opt-in via the *Override* toggle
+   — **off by default**) — wins if the toggle is on and the field is
+   set.
+3. **Engine's own default** (Modelfile / launch flag / desktop UI) —
+   wins if neither of the above is set; we simply omit the field
+   from the request body.
+
+This is why "Pull from engine" + default-off override is the
+recommended workflow: every model runs against its own engine-
+configured sampling defaults, cross-client behaviour stays
+consistent, and the bench numbers reproduce against the same loaded
+state you'd get from the engine's own UI.
+
+#### Verifying what's actually sent
+
+If a result surprises you and you want ground truth: open browser
+DevTools → Network tab → click any `chat/completions` request →
+**Payload** tab shows the exact JSON body openbench-local sent.
+That's what the engine saw.
+
 ### API keys (LM Studio, vLLM, llama.cpp, reverse proxies)
 
 Some local engines and any reverse proxy in front of one require an

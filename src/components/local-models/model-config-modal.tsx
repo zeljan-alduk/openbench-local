@@ -254,9 +254,21 @@ export function ModelConfigModal({
 
             {pulled !== null && Object.keys(pulled.extras).length > 0 ? (
               <div className="sm:col-span-2">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
-                  Load-time settings (read from engine)
-                </p>
+                <div className="flex items-center gap-1.5">
+                  <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                    Load-time settings (read from engine)
+                  </p>
+                  <span
+                    role="img"
+                    aria-label="Info"
+                    title={
+                      "These are loaded into the engine when the model was started — context length, GPU offload, KV cache, RoPE, top_k, quantisation, batch size, etc. The OpenAI-compat chat API has no fields for them, so they can't be changed from the browser. Adjust them in the engine itself (LM Studio 'Load with custom config', Ollama Modelfile / 'ollama run' flags, vLLM / llama.cpp launch args)."
+                    }
+                    className="inline-flex h-4 w-4 cursor-help items-center justify-center rounded-full border border-border bg-bg text-[9px] font-semibold leading-none text-fg-muted hover:border-accent hover:text-accent"
+                  >
+                    i
+                  </span>
+                </div>
                 <p className="mt-1 text-[11px] text-fg-faint">
                   These describe how the model is loaded (context length, GPU offload, KV cache,
                   RoPE, batch size…) and live entirely on the engine side. The OpenAI-compat
