@@ -68,13 +68,6 @@ export function ApiKeysPanel({ disabled = false }: Props) {
             on discovery + bench requests for that host:port. Stored in{' '}
             <code className="font-mono">localStorage</code> (plaintext); never exported.
           </p>
-          <p className="mt-2 max-w-2xl rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
-            <strong className="font-semibold">Security note.</strong> If you need stronger
-            protection than plaintext <code className="font-mono">localStorage</code> (shared
-            machine, untrusted browser extensions, etc.), front the engine with a reverse proxy
-            that handles auth out-of-band — mTLS, an OAuth proxy, Tailscale Funnel with ACLs —
-            rather than handing the browser a long-lived Bearer token.
-          </p>
         </div>
       </header>
 
@@ -128,6 +121,18 @@ export function ApiKeysPanel({ disabled = false }: Props) {
             Save
           </button>
         </div>
+        {/* Surface the security note only at the moment of intent —
+            once the user starts typing a key — so the panel stays
+            quiet until it's actually relevant. */}
+        {keyInput.trim().length > 0 ? (
+          <p className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[11px] leading-relaxed text-amber-700 dark:text-amber-400">
+            <strong className="font-semibold">Security note.</strong> If you need stronger
+            protection than plaintext <code className="font-mono">localStorage</code> (shared
+            machine, untrusted browser extensions, etc.), front the engine with a reverse proxy
+            that handles auth out-of-band — mTLS, an OAuth proxy, Tailscale Funnel with ACLs —
+            rather than handing the browser a long-lived Bearer token.
+          </p>
+        ) : null}
         {error !== null ? (
           <p className="text-[12px] text-danger">{error}</p>
         ) : null}
