@@ -1,0 +1,49 @@
+{
+  "name": "openbench-local",
+  "version": "0.1.0",
+  "private": false,
+  "license": "MIT",
+  "type": "module",
+  "description": "Discover and benchmark local LLMs (Ollama, LM Studio, vLLM, llama.cpp) directly from your browser. 100% client-side — nothing leaves localhost.",
+  "homepage": "https://github.com/zeljan-alduk/openbench-local",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zeljan-alduk/openbench-local.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zeljan-alduk/openbench-local/issues"
+  },
+  "keywords": [
+    "llm",
+    "benchmark",
+    "ollama",
+    "lm-studio",
+    "vllm",
+    "llama-cpp",
+    "local-llm",
+    "evaluation",
+    "browser"
+  ],
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@radix-ui/react-dialog": "^1.1.2",
+    "@radix-ui/react-switch": "^1.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "autoprefixer": "^10.4.20",
+    "postcss": "^8.5.13",
+    "tailwindcss": "^3.4.15",
+    "typescript": "^5.6.3",
+    "vite": "^6.0.0"
+  }
+}
