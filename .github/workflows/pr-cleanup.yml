@@ -1,0 +1,51 @@
+name: Clean up PR preview
+
+# When a PR closes (merged or otherwise), drop its preview folder from
+# the gh-pages branch so previews don't accumulate forever. Production
+# at the root and other PRs' folders are preserved.
+
+on:
+  pull_request:
+    types: [closed]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  cleanup:
+    name: Remove pr-${{ github.event.pull_request.number }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout gh-pages
+        uses: actions/checkout@v4
+        with:
+          ref: gh-pages
+          fetch-depth: 1
+          # If gh-pages doesn't exist yet (first PR before any deploy),
+          # the checkout fails — continue-on-error keeps the job green.
+        continue-on-error: true
+
+      - name: Remove preview folder
+        run: |
+          set -e
+          PR_DIR="pr-${{ github.event.pull_request.number }}"
+          if [ -d "$PR_DIR" ]; then
+            rm -rf "$PR_DIR"
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add -A
+            git commit -m "cleanup: remove preview ${PR_DIR}" || true
+            git push origin gh-pages
+          else
+            echo "Nothing to clean — ${PR_DIR} does not exist."
+          fi
+
+      - name: Update PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: openbench-local-preview
+          message: |
+            ### Preview removed
+
+            The preview for this PR has been deleted from `gh-pages`.

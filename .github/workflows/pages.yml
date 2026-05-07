@@ -1,0 +1,92 @@
+name: Pages — production + PR previews
+
+# Two-mode workflow:
+#   push main         → deploy to gh-pages root           (production)
+#   pull_request      → deploy to gh-pages/pr-<N>/         (preview)
+#
+# Both targets share one gh-pages branch. `keep_files: true` ensures the
+# production deploy never wipes preview folders and vice versa.
+#
+# Public URLs (after enabling Pages from `gh-pages` branch in repo settings):
+#   prod    → https://zeljan-alduk.github.io/openbench-local/
+#   PR 42   → https://zeljan-alduk.github.io/openbench-local/pr-42/
+#
+# A Next.js rewrite on ai.aldo.tech surfaces the same content as
+#   https://ai.aldo.tech/opensource/openbench-local/        (prod)
+#   https://ai.aldo.tech/opensource/openbench-local/pr-42/  (preview)
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+# One in-flight deploy per ref; new pushes cancel earlier ones so
+# previews always reflect the tip of the PR branch.
+concurrency:
+  group: pages-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: write          # peaceiris pushes to gh-pages
+  pull-requests: write     # post preview-URL comment on PRs
+
+jobs:
+  deploy:
+    name: ${{ github.event_name == 'pull_request' && format('Preview pr-{0}', github.event.pull_request.number) || 'Production' }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Deploy (production)
+        if: github.event_name == 'push'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          keep_files: true
+          commit_message: "deploy: production from ${{ github.sha }}"
+
+      - name: Deploy (PR preview)
+        if: github.event_name == 'pull_request'
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./dist
+          publish_branch: gh-pages
+          destination_dir: pr-${{ github.event.pull_request.number }}
+          keep_files: true
+          commit_message: "deploy: preview pr-${{ github.event.pull_request.number }} from ${{ github.event.pull_request.head.sha }}"
+
+      - name: Comment preview URL on PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: openbench-local-preview
+          message: |
+            ### Preview deployed
+
+            | Surface | URL |
+            | --- | --- |
+            | GitHub Pages | https://zeljan-alduk.github.io/openbench-local/pr-${{ github.event.pull_request.number }}/ |
+            | aldo.tech    | https://ai.aldo.tech/opensource/openbench-local/pr-${{ github.event.pull_request.number }}/ |
+
+            Updated on every push to this PR. Removed automatically when the PR closes.
+
+            Commit: `${{ github.event.pull_request.head.sha }}`

@@ -1,8 +1,11 @@
 name: CI
 
+# CI runs on every branch and PR. The Pages workflow does the same
+# build for main / PR previews — this job is the gate, runs typecheck,
+# and uploads the dist/ artifact for downstream review.
 on:
   push:
-    branches: [main]
+    branches-ignore: [gh-pages]
   pull_request:
     branches: [main]
 
