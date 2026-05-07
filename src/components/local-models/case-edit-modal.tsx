@@ -1,20 +1,23 @@
 import * as Dialog from '@radix-ui/react-dialog';
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import type { InlineCase } from './builtin-suite';
+import { evaluateOutput } from './evaluator-direct';
 
 /**
  * Eval-case editor.
  *
- * Edits the safe subset of `InlineCase` that's reasonable in a form:
- *   - id, input, weight, tags
- *   - evaluator: contains | not_contains | regex | exact | json_schema
- *   - capability gate: tool_use | vision | (none)
+ * Form layout:
+ *   - Left pane: editable fields (id, prompt, evaluator, weight, tags,
+ *     capability gate).
+ *   - Right pane: live preview — a render of how the case will appear
+ *     in the cases list, plus a "Try it" sandbox where the user pastes
+ *     a sample model output and sees the evaluator decide pass / fail
+ *     in real time.
  *
- * Tool-call evaluators and image attachments are intentionally NOT
- * editable here — they need richer affordances (JSON schema editor,
- * image upload) and almost nobody hand-authors them. Such cases stay
- * intact when round-tripped via YAML, but the form refuses to overwrite
- * them and shows a hint to "edit via YAML for advanced fields".
+ * Edits the safe subset of `InlineCase`: contains, not_contains, regex,
+ * exact, json_schema. Tool-call evaluators and image attachments are
+ * preserved on round-trip but only authorable via YAML — the form
+ * surfaces a notice when one is opened in edit mode.
  */
 
 type EvalKind = InlineCase['expect']['kind'];
@@ -55,19 +58,20 @@ export function CaseEditModal({
   const [evalSchema, setEvalSchema] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [advancedLocked, setAdvancedLocked] = useState(false);
+  const [sampleOutput, setSampleOutput] = useState('');
 
   useEffect(() => {
     if (!open) return;
     setError(null);
+    setSampleOutput('');
     if (initial === null) {
-      // Add mode — empty form with sensible defaults.
       setId('');
       setInput('');
       setWeight('1');
       setTags('custom');
       setRequires('');
       setEvalKind('contains');
-      setEvalValue('');
+      setEvalValue('PASS');
       setEvalSchema('');
       setAdvancedLocked(false);
       return;
@@ -78,9 +82,6 @@ export function CaseEditModal({
     setTags(initial.tags.join(', '));
     setRequires(initial.requires ?? '');
     if (initial.expect.kind === 'tool_call') {
-      // Cases with tool-call evaluators or attached images can't be
-      // round-tripped through this form — preserve them by locking the
-      // advanced fields and only allowing prompt + tags + weight edits.
       setAdvancedLocked(true);
       setEvalKind('contains');
       setEvalValue('');
@@ -97,6 +98,36 @@ export function CaseEditModal({
       setAdvancedLocked(initial.image !== undefined || initial.tools !== undefined);
     }
   }, [open, initial]);
+
+  // Build the candidate `expect` clause from the form for live preview.
+  // Returns null when the user-entered config is currently invalid (e.g.
+  // unparseable schema), so the preview pane can show a hint.
+  const previewExpect = useMemo<{ ok: true; expect: InlineCase['expect'] } | { ok: false; error: string }>(() => {
+    if (advancedLocked && initial !== null) {
+      return { ok: true, expect: initial.expect };
+    }
+    if (evalKind === 'json_schema') {
+      try {
+        return { ok: true, expect: { kind: 'json_schema', schema: JSON.parse(evalSchema || '{}') } };
+      } catch (e) {
+        return { ok: false, error: e instanceof Error ? e.message : String(e) };
+      }
+    }
+    if (evalKind === 'tool_call') {
+      return { ok: false, error: 'tool_call cases must be edited via YAML.' };
+    }
+    return { ok: true, expect: { kind: evalKind, value: evalValue } };
+  }, [advancedLocked, initial, evalKind, evalSchema, evalValue]);
+
+  const liveOutcome = useMemo(() => {
+    if (!previewExpect.ok) return null;
+    if (sampleOutput === '') return null;
+    try {
+      return evaluateOutput(sampleOutput, previewExpect.expect);
+    } catch (e) {
+      return { passed: false, score: 0, error: e instanceof Error ? e.message : String(e) };
+    }
+  }, [previewExpect, sampleOutput]);
 
   const onSubmit = () => {
     setError(null);
@@ -126,27 +157,18 @@ export function CaseEditModal({
       setError('weight must be a positive number.');
       return;
     }
-    let expect: InlineCase['expect'];
-    if (advancedLocked && initial !== null) {
-      expect = initial.expect;
-    } else if (evalKind === 'json_schema') {
-      try {
-        const schema = JSON.parse(evalSchema);
-        expect = { kind: 'json_schema', schema };
-      } catch (e) {
-        setError(`json_schema: ${e instanceof Error ? e.message : String(e)}`);
-        return;
-      }
-    } else if (evalKind === 'tool_call') {
-      // Editor doesn't author new tool_call cases — simple kinds only.
-      setError('tool_call evaluators must be edited via YAML.');
+    if (!previewExpect.ok) {
+      setError(`evaluator: ${previewExpect.error}`);
       return;
-    } else {
-      if (evalValue === '') {
-        setError(`Evaluator "${evalKind}" needs a non-empty value.`);
-        return;
-      }
-      expect = { kind: evalKind, value: evalValue };
+    }
+    if (
+      !advancedLocked &&
+      evalKind !== 'json_schema' &&
+      evalKind !== 'tool_call' &&
+      evalValue === ''
+    ) {
+      setError(`Evaluator "${evalKind}" needs a non-empty value.`);
+      return;
     }
     const tagList = tags
       .split(',')
@@ -155,7 +177,7 @@ export function CaseEditModal({
     const next: InlineCase = {
       id: trimmedId,
       input,
-      expect,
+      expect: previewExpect.expect,
       weight: w,
       tags: tagList,
       ...(requires === '' ? {} : { requires }),
@@ -170,142 +192,205 @@ export function CaseEditModal({
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-black/50 backdrop-blur-sm" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 max-h-[90vh] w-[min(720px,95vw)] -translate-x-1/2 -translate-y-1/2 overflow-auto rounded-2xl border border-border bg-bg-elevated p-6 shadow-xl">
-          <Dialog.Title className="text-lg font-semibold text-fg">
-            {mode === 'add' ? 'Add eval case' : 'Edit eval case'}
-          </Dialog.Title>
-          <Dialog.Description className="mt-1 text-xs text-fg-muted">
-            Saved to your browser. Custom cases run alongside the built-in suite, in the order
-            shown in the panel below.
-          </Dialog.Description>
-
-          <div className="mt-5 flex flex-col gap-4 text-sm">
-            <Field
-              label="id"
-              hint="lowercase, dashes; stable across edits — used for skip & retry"
-            >
-              <input
-                type="text"
-                value={id}
-                onChange={(e) => setId(e.target.value)}
-                disabled={mode === 'edit' && idIsBuiltin}
-                className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg disabled:opacity-60"
-                placeholder="my-test"
-              />
-            </Field>
-
-            <Field label="prompt (input)" hint="exactly what the model receives">
-              <textarea
-                value={input}
-                onChange={(e) => setInput(e.target.value)}
-                rows={6}
-                className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-[13px] text-fg"
-                placeholder="Reply with PASS."
-              />
-            </Field>
-
-            {advancedLocked ? (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-                This case uses an advanced evaluator (tool-call) or attachment (image). Edit those
-                fields by exporting to YAML and re-importing.
-              </div>
-            ) : (
-              <>
-                <Field label="evaluator">
-                  <div className="flex flex-col gap-2 sm:flex-row sm:items-start">
-                    <select
-                      value={evalKind}
-                      onChange={(e) => setEvalKind(e.target.value as EvalKind)}
-                      className="rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg sm:w-44"
-                    >
-                      {SIMPLE_KINDS.map((k) => (
-                        <option key={k} value={k}>
-                          {k}
-                        </option>
-                      ))}
-                    </select>
-                    {evalKind === 'json_schema' ? (
-                      <textarea
-                        value={evalSchema}
-                        onChange={(e) => setEvalSchema(e.target.value)}
-                        rows={6}
-                        className="w-full flex-1 rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] text-fg"
-                        placeholder='{"type":"object","required":["x"],"properties":{"x":{"type":"number"}}}'
-                      />
-                    ) : (
-                      <input
-                        type="text"
-                        value={evalValue}
-                        onChange={(e) => setEvalValue(e.target.value)}
-                        className="w-full flex-1 rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
-                        placeholder={evalKind === 'regex' ? '^PASS$' : 'PASS'}
-                      />
-                    )}
-                  </div>
-                  <p className="mt-1 text-[11px] text-fg-muted">
-                    {evalKindHint(evalKind)}
-                  </p>
-                </Field>
-              </>
-            )}
-
-            <div className="grid gap-4 sm:grid-cols-3">
-              <Field label="weight">
-                <input
-                  type="number"
-                  min="0"
-                  step="0.1"
-                  value={weight}
-                  onChange={(e) => setWeight(e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
-                />
-              </Field>
-              <Field label="tags" hint="comma-separated">
-                <input
-                  type="text"
-                  value={tags}
-                  onChange={(e) => setTags(e.target.value)}
-                  className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
-                  placeholder="reasoning, fast"
-                />
-              </Field>
-              <Field label="requires capability">
-                <select
-                  value={requires}
-                  onChange={(e) => setRequires(e.target.value as '' | 'tool_use' | 'vision')}
-                  className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg"
-                >
-                  <option value="">(none)</option>
-                  <option value="tool_use">tool_use</option>
-                  <option value="vision">vision</option>
-                </select>
-              </Field>
+        <Dialog.Content className="fixed left-1/2 top-1/2 z-50 flex max-h-[92vh] w-[min(1100px,96vw)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-2xl border border-border bg-bg-elevated shadow-2xl">
+          <header className="flex items-start justify-between gap-4 border-b border-border bg-bg-elevated px-6 py-4">
+            <div>
+              <Dialog.Title className="text-lg font-semibold text-fg">
+                {mode === 'add' ? 'Add eval case' : 'Edit eval case'}
+              </Dialog.Title>
+              <Dialog.Description className="mt-1 text-xs text-fg-muted">
+                Saved to your browser. Custom cases run alongside the built-in suite.
+              </Dialog.Description>
             </div>
-
-            {error !== null ? (
-              <div className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-xs text-danger">
-                {error}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="mt-6 flex justify-end gap-2">
             <Dialog.Close asChild>
               <button
                 type="button"
-                className="rounded-lg border border-border bg-bg px-4 py-2 text-sm font-medium text-fg hover:bg-bg-subtle"
+                aria-label="Close"
+                className="rounded-md border border-border bg-bg px-2 py-1 text-sm text-fg-muted hover:bg-bg-subtle"
               >
-                Cancel
+                ✕
               </button>
             </Dialog.Close>
-            <button
-              type="button"
-              onClick={onSubmit}
-              className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg shadow-sm hover:shadow-md"
-            >
-              {mode === 'add' ? 'Add case' : 'Save changes'}
-            </button>
+          </header>
+
+          <div className="flex flex-1 flex-col gap-0 overflow-auto lg:flex-row">
+            {/* ───── Form pane ───── */}
+            <div className="flex-1 border-border p-6 lg:max-w-[58%] lg:border-r">
+              <div className="flex flex-col gap-5 text-sm">
+                <Field
+                  label="id"
+                  hint="lowercase, dashes — stable identifier used by skip & retry"
+                >
+                  <input
+                    type="text"
+                    value={id}
+                    onChange={(e) => setId(e.target.value)}
+                    disabled={mode === 'edit' && idIsBuiltin}
+                    className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg disabled:opacity-60"
+                    placeholder="my-test"
+                  />
+                </Field>
+
+                <Field label="prompt" hint="exactly what the model receives as the user message">
+                  <textarea
+                    value={input}
+                    onChange={(e) => setInput(e.target.value)}
+                    rows={10}
+                    spellCheck={false}
+                    className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[13px] leading-relaxed text-fg"
+                    placeholder="Reply with PASS."
+                  />
+                </Field>
+
+                {advancedLocked ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
+                    This case uses an advanced evaluator (tool-call) or attachment (image). Edit
+                    those fields by exporting to YAML and re-importing.
+                  </div>
+                ) : (
+                  <Field label="evaluator">
+                    <div className="flex flex-col gap-2">
+                      <select
+                        value={evalKind}
+                        onChange={(e) => setEvalKind(e.target.value as EvalKind)}
+                        className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg sm:max-w-[16rem]"
+                      >
+                        {SIMPLE_KINDS.map((k) => (
+                          <option key={k} value={k}>
+                            {k}
+                          </option>
+                        ))}
+                      </select>
+                      {evalKind === 'json_schema' ? (
+                        <textarea
+                          value={evalSchema}
+                          onChange={(e) => setEvalSchema(e.target.value)}
+                          rows={8}
+                          spellCheck={false}
+                          className="w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
+                          placeholder={'{\n  "type": "object",\n  "required": ["x"],\n  "properties": { "x": { "type": "number" } }\n}'}
+                        />
+                      ) : (
+                        <input
+                          type="text"
+                          value={evalValue}
+                          onChange={(e) => setEvalValue(e.target.value)}
+                          spellCheck={false}
+                          className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
+                          placeholder={evalKind === 'regex' ? '^PASS$' : 'PASS'}
+                        />
+                      )}
+                      <p className="text-[11px] text-fg-muted">{evalKindHint(evalKind)}</p>
+                    </div>
+                  </Field>
+                )}
+
+                <div className="grid gap-4 sm:grid-cols-3">
+                  <Field label="weight">
+                    <input
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={weight}
+                      onChange={(e) => setWeight(e.target.value)}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
+                    />
+                  </Field>
+                  <Field label="tags" hint="comma-separated">
+                    <input
+                      type="text"
+                      value={tags}
+                      onChange={(e) => setTags(e.target.value)}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 font-mono text-sm text-fg"
+                      placeholder="reasoning, fast"
+                    />
+                  </Field>
+                  <Field label="requires capability">
+                    <select
+                      value={requires}
+                      onChange={(e) => setRequires(e.target.value as '' | 'tool_use' | 'vision')}
+                      className="w-full rounded-md border border-border bg-bg px-3 py-2 text-sm text-fg"
+                    >
+                      <option value="">(none)</option>
+                      <option value="tool_use">tool_use</option>
+                      <option value="vision">vision</option>
+                    </select>
+                  </Field>
+                </div>
+
+                {error !== null ? (
+                  <div className="rounded-md border border-danger/40 bg-danger/5 px-3 py-2 text-xs text-danger">
+                    {error}
+                  </div>
+                ) : null}
+              </div>
+            </div>
+
+            {/* ───── Live preview pane ───── */}
+            <aside className="flex-1 bg-bg-subtle/40 p-6 lg:max-w-[42%]">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-muted">
+                Preview
+              </p>
+              <h3 className="mt-1 text-sm font-semibold text-fg">How the row will appear</h3>
+              <CardPreview
+                id={id || '(unset)'}
+                source={mode === 'add' ? 'custom' : idIsBuiltin ? 'edited' : 'custom'}
+                evalKind={evalKind}
+                requires={requires === '' ? null : requires}
+                tags={tags
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter((t) => t.length > 0)}
+                input={input}
+              />
+
+              <div className="mt-6">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-fg-muted">
+                  Try it
+                </p>
+                <h3 className="mt-1 text-sm font-semibold text-fg">
+                  Paste a sample model output to test the evaluator
+                </h3>
+                <textarea
+                  value={sampleOutput}
+                  onChange={(e) => setSampleOutput(e.target.value)}
+                  rows={6}
+                  spellCheck={false}
+                  placeholder="(model would reply here…)"
+                  className="mt-2 w-full resize-y rounded-md border border-border bg-bg px-3 py-2 font-mono text-[12px] leading-relaxed text-fg"
+                />
+                <OutcomeChip
+                  outcome={liveOutcome}
+                  invalid={!previewExpect.ok ? previewExpect.error : null}
+                />
+              </div>
+            </aside>
           </div>
+
+          <footer className="flex items-center justify-between gap-3 border-t border-border bg-bg-elevated px-6 py-4">
+            <p className="text-[11px] text-fg-faint">
+              {mode === 'edit' && idIsBuiltin
+                ? 'Editing a built-in case stores an override; press Reset later to restore the default.'
+                : 'Custom cases live in your browser only.'}
+            </p>
+            <div className="flex gap-2">
+              <Dialog.Close asChild>
+                <button
+                  type="button"
+                  className="rounded-lg border border-border bg-bg px-4 py-2 text-sm font-medium text-fg hover:bg-bg-subtle"
+                >
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                type="button"
+                onClick={onSubmit}
+                className="rounded-lg bg-accent px-4 py-2 text-sm font-semibold text-accent-fg shadow-sm hover:shadow-md"
+              >
+                {mode === 'add' ? 'Add case' : 'Save changes'}
+              </button>
+            </div>
+          </footer>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
@@ -332,12 +417,117 @@ function Field({
   );
 }
 
+function CardPreview({
+  id,
+  source,
+  evalKind,
+  requires,
+  tags,
+  input,
+}: {
+  id: string;
+  source: 'edited' | 'custom';
+  evalKind: EvalKind;
+  requires: 'tool_use' | 'vision' | null;
+  tags: readonly string[];
+  input: string;
+}) {
+  const sourceTone =
+    source === 'edited' ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400' : 'bg-accent/15 text-accent';
+  const preview = input.replace(/\s+/g, ' ').slice(0, 110);
+  return (
+    <div className="mt-3 rounded-lg border border-border bg-bg p-3">
+      <div className="flex flex-wrap items-center gap-2">
+        <code className="rounded bg-bg-subtle px-1.5 py-0.5 font-mono text-[11px] text-fg">
+          {id}
+        </code>
+        <span
+          className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider ${sourceTone}`}
+        >
+          {source}
+        </span>
+        <span className="rounded bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px] uppercase tracking-wider text-fg-muted">
+          {evalKind}
+        </span>
+        {requires !== null ? (
+          <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
+            needs {requires}
+          </span>
+        ) : null}
+        {tags.slice(0, 3).map((t) => (
+          <span key={t} className="text-[10px] text-fg-faint">
+            #{t}
+          </span>
+        ))}
+      </div>
+      <p className="mt-2 text-[12px] leading-relaxed text-fg-muted">
+        {preview === '' ? <span className="italic text-fg-faint">(prompt is empty)</span> : preview}
+        {input.length > 110 ? '…' : ''}
+      </p>
+    </div>
+  );
+}
+
+interface MaybeOutcome {
+  readonly passed: boolean;
+  readonly score: number;
+  readonly error?: string;
+}
+
+function OutcomeChip({
+  outcome,
+  invalid,
+}: {
+  outcome: MaybeOutcome | null;
+  invalid: string | null;
+}) {
+  if (invalid !== null) {
+    return (
+      <p className="mt-2 rounded-md border border-amber-500/30 bg-amber-500/5 px-3 py-2 text-[12px] text-amber-700 dark:text-amber-400">
+        Evaluator unparseable — fix to enable live preview ({invalid}).
+      </p>
+    );
+  }
+  if (outcome === null) {
+    return (
+      <p className="mt-2 text-[11px] text-fg-faint">
+        Type a sample output above and the evaluator will score it live.
+      </p>
+    );
+  }
+  if (outcome.error !== undefined) {
+    return (
+      <div className="mt-2 inline-flex items-center gap-2 rounded-full bg-danger/15 px-3 py-1 text-[12px] font-semibold text-danger">
+        <span aria-hidden>✕</span>
+        <span>Evaluator error: {outcome.error}</span>
+      </div>
+    );
+  }
+  return (
+    <div className="mt-2 flex items-center gap-2">
+      <span
+        className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold ${
+          outcome.passed
+            ? 'bg-success/15 text-success'
+            : 'bg-danger/15 text-danger'
+        }`}
+      >
+        <span aria-hidden>{outcome.passed ? '✓' : '✕'}</span>
+        <span>{outcome.passed ? 'PASS' : 'FAIL'}</span>
+      </span>
+      <span className="font-mono text-[11px] text-fg-muted">
+        score {outcome.score.toFixed(2)}
+      </span>
+    </div>
+  );
+}
+
 function evalKindHint(kind: EvalKind): string {
   switch (kind) {
     case 'contains':
       return 'Pass when the output contains the value as a substring (case-sensitive).';
     case 'not_contains':
-      return 'Pass when the output does NOT contain the value (useful for safety / prompt-leak checks).';
+      return 'Pass when the output does NOT contain the value (useful for safety / leak checks).';
     case 'regex':
       return 'JavaScript regex source — applied with the default `.test()` semantics.';
     case 'exact':
