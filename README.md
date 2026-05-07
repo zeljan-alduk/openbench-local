@@ -1,5 +1,9 @@
 # openbench-local
 
+[![CI](https://github.com/zeljan-alduk/openbench-local/actions/workflows/ci.yml/badge.svg)](https://github.com/zeljan-alduk/openbench-local/actions/workflows/ci.yml)
+[![Pages](https://github.com/zeljan-alduk/openbench-local/actions/workflows/pages.yml/badge.svg)](https://github.com/zeljan-alduk/openbench-local/actions/workflows/pages.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 > Discover and benchmark every local LLM on your machine, in seconds, from your browser.
 > 100% client-side. No signup. Nothing leaves localhost.
 

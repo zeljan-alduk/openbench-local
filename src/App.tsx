@@ -32,6 +32,7 @@ export function App() {
             <Pill>No API key</Pill>
             <Pill>Nothing leaves localhost</Pill>
             <Pill>18 eval cases · &lt;3 min</Pill>
+            <Pill>MIT licensed</Pill>
           </ul>
         </header>
 
