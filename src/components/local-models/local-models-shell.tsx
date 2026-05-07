@@ -459,14 +459,27 @@ export function LocalModelsShell() {
           />
           <ApiKeysPanel disabled={phase === 'running' || phase === 'scanning'} />
           {tipSources.length > 0 ? (
-            <div className="flex flex-col gap-2 print:hidden">
-              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
-                Engine setup tips
-              </p>
-              {tipSources.map((s) => (
-                <EngineSetupTips key={s} source={s} />
-              ))}
-            </div>
+            <details className="group flex flex-col gap-2 rounded-lg border border-border bg-bg px-4 py-3 print:hidden">
+              <summary className="flex cursor-pointer list-none items-center justify-between gap-2 [&::-webkit-details-marker]:hidden">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                  Engine setup tips
+                  <span className="ml-1.5 rounded-full bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-fg">
+                    {tipSources.length}
+                  </span>
+                </p>
+                <span
+                  aria-hidden
+                  className="text-fg-muted transition-transform group-open:rotate-90"
+                >
+                  ▸
+                </span>
+              </summary>
+              <div className="mt-2 flex flex-col gap-2 border-t border-border pt-3">
+                {tipSources.map((s) => (
+                  <EngineSetupTips key={s} source={s} />
+                ))}
+              </div>
+            </details>
           ) : null}
         </div>
       </section>

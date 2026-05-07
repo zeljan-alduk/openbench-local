@@ -52,16 +52,18 @@ export function ApiKeysPanel({ disabled = false }: Props) {
   };
 
   return (
-    <section className="rounded-2xl border border-border bg-bg-elevated shadow-sm print:hidden">
-      <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-border px-5 py-4">
-        <div>
+    <details className="group rounded-2xl border border-border bg-bg-elevated shadow-sm print:hidden">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3 px-5 py-4 [&::-webkit-details-marker]:hidden">
+        <div className="min-w-0 flex-1">
           <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
             API keys
           </p>
           <h2 className="mt-1 text-base font-semibold text-fg">
-            Bearer tokens for engines that require them
+            {entries.length === 0
+              ? 'Bearer tokens for engines that require them'
+              : `${entries.length} key${entries.length === 1 ? '' : 's'} configured`}
           </h2>
-          <p className="mt-1 max-w-2xl text-xs leading-relaxed text-fg-muted">
+          <p className="mt-1 hidden max-w-2xl text-xs leading-relaxed text-fg-muted group-open:block">
             LM Studio's API-key mode, vLLM <code className="font-mono">--api-key</code>,
             llama.cpp <code className="font-mono">--api-key</code>, or anything behind a reverse
             proxy. Keys are sent as <code className="font-mono">Authorization: Bearer …</code>{' '}
@@ -69,9 +71,15 @@ export function ApiKeysPanel({ disabled = false }: Props) {
             <code className="font-mono">localStorage</code> (plaintext); never exported.
           </p>
         </div>
-      </header>
+        <span
+          aria-hidden
+          className="text-sm text-fg-muted transition-transform group-open:rotate-90"
+        >
+          ▸
+        </span>
+      </summary>
 
-      <div className="flex flex-col gap-3 px-5 py-4">
+      <div className="flex flex-col gap-3 border-t border-border px-5 py-4">
         {entries.length === 0 ? (
           <p className="text-xs text-fg-faint">
             No keys configured. Add one below if your LLM server requires it.
@@ -137,7 +145,7 @@ export function ApiKeysPanel({ disabled = false }: Props) {
           <p className="text-[12px] text-danger">{error}</p>
         ) : null}
       </div>
-    </section>
+    </details>
   );
 }
 

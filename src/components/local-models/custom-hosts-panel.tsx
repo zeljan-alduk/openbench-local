@@ -64,18 +64,31 @@ export function CustomHostsPanel({ hosts, onChange, disabled }: Props) {
   );
 
   return (
-    <div className="rounded-lg border border-border bg-bg px-4 py-3">
-      <div className="flex flex-wrap items-baseline justify-between gap-2">
+    <details className="group rounded-lg border border-border bg-bg">
+      <summary className="flex cursor-pointer list-none flex-wrap items-baseline justify-between gap-2 px-4 py-3 [&::-webkit-details-marker]:hidden">
         <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
           Custom hosts
+          {hosts.length > 0 ? (
+            <span className="ml-1.5 rounded-full bg-bg-subtle px-1.5 py-0.5 font-mono text-[10px] normal-case tracking-normal text-fg">
+              {hosts.length}
+            </span>
+          ) : null}
         </p>
-        <p className="text-[11px] text-fg-muted">
-          Probe LAN / remote endpoints in addition to{' '}
-          <span className="font-mono text-fg">127.0.0.1</span>.
-        </p>
-      </div>
+        <div className="flex items-center gap-2">
+          <p className="text-[11px] text-fg-muted">
+            Probe LAN / remote endpoints in addition to{' '}
+            <span className="font-mono text-fg">127.0.0.1</span>.
+          </p>
+          <span aria-hidden className="text-fg-muted transition-transform group-open:rotate-90">
+            ▸
+          </span>
+        </div>
+      </summary>
 
-      <form onSubmit={onSubmit} className="mt-3 flex flex-wrap items-center gap-2">
+      <form
+        onSubmit={onSubmit}
+        className="flex flex-wrap items-center gap-2 border-t border-border px-4 pt-3"
+      >
         <input
           type="text"
           value={draft}
@@ -98,52 +111,58 @@ export function CustomHostsPanel({ hosts, onChange, disabled }: Props) {
         </button>
       </form>
 
-      {error !== null ? (
-        <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">{error}</p>
-      ) : null}
+      <div className="px-4 pb-3">
+        {error !== null ? (
+          <p className="mt-2 text-[11px] text-amber-700 dark:text-amber-400">{error}</p>
+        ) : null}
 
-      {hosts.length > 0 ? (
-        <ul className="mt-3 flex flex-wrap gap-1.5">
-          {hosts.map((h) => (
-            <li key={h}>
-              <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-elevated px-2 py-0.5 font-mono text-[11px] text-fg">
-                {h}
-                <button
-                  type="button"
-                  onClick={() => remove(h)}
-                  disabled={disabled}
-                  aria-label={`Remove ${h}`}
-                  className="text-fg-faint hover:text-fg disabled:opacity-50"
-                >
-                  ×
-                </button>
-              </span>
-            </li>
-          ))}
-        </ul>
-      ) : null}
+        {hosts.length > 0 ? (
+          <ul className="mt-3 flex flex-wrap gap-1.5">
+            {hosts.map((h) => (
+              <li key={h}>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg-elevated px-2 py-0.5 font-mono text-[11px] text-fg">
+                  {h}
+                  <button
+                    type="button"
+                    onClick={() => remove(h)}
+                    disabled={disabled}
+                    aria-label={`Remove ${h}`}
+                    className="text-fg-faint hover:text-fg disabled:opacity-50"
+                  >
+                    ×
+                  </button>
+                </span>
+              </li>
+            ))}
+          </ul>
+        ) : null}
 
-      <details className="mt-3 text-[11px] text-fg-muted">
-        <summary className="cursor-pointer hover:text-fg">Why might a host not respond?</summary>
-        <div className="mt-2 space-y-1.5 pl-4">
-          <p>
-            <span className="font-semibold text-fg">Mixed content.</span> This page is served over
-            HTTPS. Browsers silently block <code>http://</code> requests to non-loopback hosts.{' '}
-            <code>https://</code> upstreams work if the cert is trusted; loopback is the special
-            case (that's why <code>127.0.0.1</code> always works).
-          </p>
-          <p>
-            <span className="font-semibold text-fg">Private Network Access.</span> Recent Chrome /
-            Edge require a PNA preflight when an HTTPS page calls into a private IP. If your LLM
-            doesn't reply with the right preflight headers, the browser drops the request.
-          </p>
-          <p>
-            <span className="font-semibold text-fg">CORS.</span> Same as the localhost case — the
-            LLM has to allow this page's origin. Recipes are below for the runtimes we know.
-          </p>
-        </div>
-      </details>
-    </div>
+        <details className="mt-3 text-[11px] text-fg-muted">
+          <summary className="cursor-pointer hover:text-fg">
+            Why might a host not respond?
+          </summary>
+          <div className="mt-2 space-y-1.5 pl-4">
+            <p>
+              <span className="font-semibold text-fg">Mixed content.</span> This page is served
+              over HTTPS. Browsers silently block <code>http://</code> requests to non-loopback
+              hosts. <code>https://</code> upstreams work if the cert is trusted; loopback is the
+              special case (that's why <code>127.0.0.1</code> always works).
+            </p>
+            <p>
+              <span className="font-semibold text-fg">Private Network Access.</span> Recent
+              Chrome / Edge require a PNA preflight when an HTTPS page calls into a private IP.
+              If your LLM doesn't reply with the right preflight headers, the browser drops the
+              request.
+            </p>
+            <p>
+              <span className="font-semibold text-fg">CORS.</span> Same as the localhost case —
+              the LLM has to allow this page's origin. Recipes are below for the runtimes we
+              know.
+            </p>
+          </div>
+        </details>
+      </div>
+    </details>
   );
 }
 

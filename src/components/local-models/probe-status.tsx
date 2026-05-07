@@ -31,19 +31,38 @@ export function ProbeStatus({ probes }: Props) {
   // resolution order.
   const bySource = new Map<DiscoverySource, DiscoveryProbeResult>();
   for (const p of probes) bySource.set(p.source, p);
+  const okCount = probes.filter((p) => p.ok).length;
+  const failCount = probes.length - okCount;
 
   return (
-    <div className="rounded-xl border border-border bg-bg p-3">
-      <p className="mb-2 text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
-        Probe status
-      </p>
-      <ul className="grid gap-2 sm:grid-cols-2">
+    <details className="group rounded-xl border border-border bg-bg">
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-2 px-3 py-2 [&::-webkit-details-marker]:hidden">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-fg-muted">
+          Probe status
+        </p>
+        <div className="flex items-center gap-2 text-[11px]">
+          {okCount > 0 ? (
+            <span className="font-mono text-emerald-700 dark:text-emerald-400">
+              ✓ {okCount}
+            </span>
+          ) : null}
+          {failCount > 0 ? (
+            <span className="font-mono text-amber-700 dark:text-amber-400">
+              ✗ {failCount}
+            </span>
+          ) : null}
+          <span aria-hidden className="text-fg-muted transition-transform group-open:rotate-90">
+            ▸
+          </span>
+        </div>
+      </summary>
+      <ul className="grid gap-2 border-t border-border p-3 sm:grid-cols-2">
         {RUNTIME_ORDER.map((src) => {
           const p = bySource.get(src);
           return <ProbeRow key={src} source={src} probe={p} />;
         })}
       </ul>
-    </div>
+    </details>
   );
 }
 
