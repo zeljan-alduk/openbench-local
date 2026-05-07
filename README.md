@@ -7,6 +7,35 @@
 > Discover and benchmark every local LLM on your machine, in seconds, from your browser.
 > 100% client-side. No signup. Nothing leaves localhost.
 
+## Live demo
+
+| Surface | URL |
+| --- | --- |
+| Hosted on aldo.tech (canonical) | <https://ai.aldo.tech/opensource/openbench-local/> |
+| GitHub Pages (mirror) | <https://zeljan-alduk.github.io/openbench-local/> |
+
+Both URLs serve the same `main`-branch build. The `aldo.tech` host
+is the canonical surface — it proxies the GitHub Pages content
+through a Next.js Route Handler that injects the right `<base>` so
+relative asset paths resolve cleanly.
+
+### Per-PR preview deploys
+
+Every pull request opened against `main` gets its own ephemeral
+preview that updates on every push to the branch and is removed
+when the PR closes:
+
+| Surface | URL pattern |
+| --- | --- |
+| aldo.tech | `https://ai.aldo.tech/opensource/openbench-local/pr-<N>/` |
+| GitHub Pages | `https://zeljan-alduk.github.io/openbench-local/pr-<N>/` |
+
+A sticky comment on each PR carries both URLs and the commit SHA the
+preview was built from. Reviewers click through, exercise the build
+in their browser, and request changes the same way they would with a
+managed host (Vercel / Netlify / Cloudflare Pages). The mechanics
+are described in [CI / CD](#ci--cd) below.
+
 `openbench-local` is a single-page app that:
 
 1. **Probes `127.0.0.1`** for any OpenAI-compatible LLM server — Ollama,
