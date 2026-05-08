@@ -714,7 +714,7 @@ function LiveRow({ inFlight }: { inFlight: InFlightCase }) {
             `overflow-hidden` anchors the latest chars to the bottom.
             As new tokens arrive, the text pushes upward and old chars
             clip off the top — same visual feel as a streaming log. */}
-        <div className="flex h-16 flex-col justify-end overflow-hidden font-mono text-[11px] leading-relaxed text-fg-muted">
+        <div className="flex h-14 flex-col justify-end overflow-hidden font-mono text-[11px] leading-relaxed text-fg-muted">
           {tail.length > 0 ? (
             <pre className="m-0 whitespace-pre-wrap break-words">{tail}</pre>
           ) : (
