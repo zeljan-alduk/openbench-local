@@ -28,7 +28,7 @@ const DEFAULTS: Required<Omit<RunConfig, 'reasoningEffort'>> & {
 } = {
   temperature: 0,
   topP: 1,
-  maxTokens: 1024,
+  maxTokens: 8192,
   seed: 0,
   systemPrompt: '',
   reasoningEffort: 'off',
@@ -160,18 +160,37 @@ export function RunConfigPanel({ value, onChange, enabled, onEnabledChange, disa
 
           <Field
             label="Max tokens"
-            help="Response length cap. Long-context-recall and code-refactor cases benefit from ≥1024."
+            help="Response length cap. 0 = unlimited (engine uses its full context budget — risk: a stuck case can hang for minutes). Reasoning models benefit from ≥4096."
           >
-            <input
-              type="number"
-              step="64"
-              min="64"
-              max="32768"
-              value={value.maxTokens ?? DEFAULTS.maxTokens}
-              onChange={(e) => set('maxTokens', Number.parseInt(e.target.value, 10))}
-              disabled={disabled}
-              className="w-24 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
-            />
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                step="64"
+                min="0"
+                max="65536"
+                value={value.maxTokens ?? DEFAULTS.maxTokens}
+                onChange={(e) => {
+                  const n = Number.parseInt(e.target.value, 10);
+                  set('maxTokens', Number.isFinite(n) ? n : DEFAULTS.maxTokens);
+                }}
+                disabled={disabled}
+                className="w-24 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+              />
+              <button
+                type="button"
+                onClick={() => set('maxTokens', 0)}
+                disabled={disabled}
+                title="No cap — let the engine decide"
+                className="rounded border border-border bg-bg px-2 py-1 text-[11px] text-fg-muted hover:border-accent hover:text-accent disabled:opacity-50"
+              >
+                ∞
+              </button>
+              {(value.maxTokens ?? DEFAULTS.maxTokens) === 0 ? (
+                <span className="font-mono text-[11px] text-amber-700 dark:text-amber-400">
+                  unlimited
+                </span>
+              ) : null}
+            </div>
           </Field>
 
           <Field

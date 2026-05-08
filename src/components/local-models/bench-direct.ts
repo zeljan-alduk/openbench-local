@@ -163,12 +163,13 @@ export interface RunBenchOptions {
   readonly runConfig?: RunConfig;
 }
 
-// 2048 default (raised from 1024) so reasoning models — gpt-oss,
-// DeepSeek-R1, QwQ, etc. — have room to finish their thinking trace
-// and still emit a visible answer. The CoT content alone often
-// consumes 1k+ tokens on medium-effort cases; below 2k the model
-// hits the cap mid-thought and we capture zero output.
-const DEFAULT_MAX_TOKENS = 2048;
+// Default cap for cases where the user / per-model config doesn't
+// specify one. 8192 is generous enough for reasoning models
+// (gpt-oss, DeepSeek-R1, QwQ) to finish a full thought + emit an
+// answer, but tight enough to catch runaway loops within ~minute.
+// Set to 0 in the Setup panel or per-model config to send no
+// max_tokens at all (the engine then uses its model-context budget).
+const DEFAULT_MAX_TOKENS = 8192;
 
 /** Run the suite. Returns the final summary. */
 export async function runBenchDirect(opts: RunBenchOptions): Promise<{
@@ -426,9 +427,14 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
     messages,
     stream: true,
     stream_options: { include_usage: true },
-    max_tokens: ctx.maxTokens,
     temperature: cfg.temperature ?? 0,
   };
+  // max_tokens === 0 is the explicit "unlimited / engine default"
+  // sentinel: omit the field from the body so the engine uses its own
+  // model-context budget instead of our cap. Anything > 0 is a hard
+  // cap we ship verbatim. Negative values are treated as unlimited
+  // for forgiveness (some users type -1).
+  if (ctx.maxTokens > 0) body.max_tokens = ctx.maxTokens;
   if (typeof cfg.topP === 'number') body.top_p = cfg.topP;
   if (typeof cfg.seed === 'number') body.seed = cfg.seed;
   if (cfg.reasoningEffort !== undefined) body.reasoning_effort = cfg.reasoningEffort;
