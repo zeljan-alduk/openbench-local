@@ -38,21 +38,48 @@ interface Point {
   readonly color: string;
 }
 
-// Per-source colour. Keep emerald / violet / amber / rose so the
-// dots read as distinct categories without clashing with the
-// accent-blue brand and stay legible in dark mode.
-const SOURCE_COLORS: Record<string, string> = {
-  ollama: '#10b981',
-  lmstudio: '#8b5cf6',
-  vllm: '#f59e0b',
-  llamacpp: '#f43f5e',
-};
+// Per-model palette. Twelve hand-picked Tailwind 500-shade colours
+// that read distinct in both light and dark mode and don't clash
+// with the accent-blue brand. Models are assigned colours
+// deterministically by id-hash so the same model lights up the same
+// shade across reruns.
+const PALETTE: readonly string[] = [
+  '#8b5cf6', // violet
+  '#10b981', // emerald
+  '#f59e0b', // amber
+  '#f43f5e', // rose
+  '#0ea5e9', // sky
+  '#d946ef', // fuchsia
+  '#84cc16', // lime
+  '#14b8a6', // teal
+  '#6366f1', // indigo
+  '#f97316', // orange
+  '#06b6d4', // cyan
+  '#ec4899', // pink
+];
 const SOURCE_LABELS: Record<string, string> = {
   ollama: 'Ollama',
   lmstudio: 'LM Studio',
   vllm: 'vLLM',
   llamacpp: 'llama.cpp',
 };
+
+/**
+ * Pick a deterministic palette index for a model. Hash on the
+ * `source::id::port` triple so the same endpoint always lights up
+ * the same colour across reruns; permutations of the same set keep
+ * stable colours.
+ */
+function colourFor(key: string): string {
+  let h = 5381;
+  for (let i = 0; i < key.length; i++) h = ((h << 5) + h + key.charCodeAt(i)) >>> 0;
+  return PALETTE[h % PALETTE.length] ?? PALETTE[0]!;
+}
+
+/** Truncate long model ids so labels don't run off the canvas. */
+function shortId(id: string): string {
+  return id.length > 28 ? `${id.slice(0, 27)}…` : id;
+}
 
 const W = 880;
 const H = 440;
@@ -86,7 +113,7 @@ export function QualitySpeedChart({ runs }: Props) {
           avgTokPerSec: tokps,
           p95LatencyMs: r.summary.p95LatencyMs,
           totalMs,
-          color: SOURCE_COLORS[r.model.source] ?? '#64748b',
+          color: colourFor(`${r.model.source}::${r.model.id}::${r.model.port}`),
         };
       });
   }, [runs]);
@@ -121,9 +148,9 @@ export function QualitySpeedChart({ runs }: Props) {
   const yTicks = [0, 0.25, 0.5, 0.75, 1];
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map((p) => p * maxTokps);
 
-  // Sources actually present, in render order, for the legend chip
-  // strip.
-  const sources = Array.from(new Set(points.map((p) => p.source)));
+  // Per-model legend chips. Reads top-down with the chart so the
+  // user can map name → colour at a glance for crowded plots.
+  const legend = points;
 
   return (
     <section className="rounded-2xl border border-border bg-bg-elevated shadow-sm">
@@ -141,18 +168,25 @@ export function QualitySpeedChart({ runs }: Props) {
             axes by anyone else, so they're the rational choices for any quality / speed trade-off.
           </p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
-          {sources.map((s) => (
+        <div className="flex max-w-md flex-wrap items-center justify-end gap-1.5">
+          {legend.map((p) => (
             <span
-              key={s}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border bg-bg px-2 py-0.5 text-[11px] font-mono text-fg-muted"
+              key={`legend-${p.id}-${p.source}`}
+              onMouseEnter={() => setHover(p)}
+              onMouseLeave={() => setHover((cur) => (cur === p ? null : cur))}
+              className={`inline-flex max-w-[16rem] cursor-default items-center gap-1.5 rounded-full border bg-bg px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                hover === p
+                  ? 'border-accent text-fg'
+                  : 'border-border text-fg-muted'
+              }`}
+              title={`${p.id} · ${SOURCE_LABELS[p.source] ?? p.source}`}
             >
               <span
                 aria-hidden
-                className="h-2 w-2 rounded-full"
-                style={{ background: SOURCE_COLORS[s] ?? '#64748b' }}
+                className="h-2 w-2 flex-shrink-0 rounded-full"
+                style={{ background: p.color }}
               />
-              {SOURCE_LABELS[s] ?? s}
+              <span className="truncate">{shortId(p.id)}</span>
             </span>
           ))}
         </div>
@@ -273,12 +307,21 @@ export function QualitySpeedChart({ runs }: Props) {
             />
           ))}
 
-          {/* Data points. Larger hit area than visual radius for
-              easier hovering on dense plots. */}
+          {/* Data points + permanent labels. Hit-area circle is
+              larger than the visual dot for easier hovering on dense
+              plots. Labels use paint-order so a stroke-width
+              backdrop punches through gridlines for readability. */}
           {points.map((p) => {
             const cx = xScale(p.avgTokPerSec);
             const cy = yScale(p.passRate);
             const isHover = hover === p;
+            const label = shortId(p.id);
+            // Flip the label when the dot is in the right ~25% so the
+            // text doesn't run off the plot. Same idea for top edge.
+            const flipX = cx > PAD_L + PLOT_W * 0.72;
+            const flipY = cy < PAD_T + PLOT_H * 0.12;
+            const labelX = flipX ? cx - 14 : cx + 14;
+            const labelY = flipY ? cy + 20 : cy - 14;
             return (
               <g
                 key={`pt-${p.id}-${p.source}`}
@@ -306,6 +349,22 @@ export function QualitySpeedChart({ runs }: Props) {
                   style={{ transition: 'r 120ms ease-out' }}
                   className="drop-shadow-sm"
                 />
+                <text
+                  x={labelX}
+                  y={labelY}
+                  textAnchor={flipX ? 'end' : 'start'}
+                  className="pointer-events-none fill-fg font-mono text-[11px] font-medium"
+                  style={{
+                    paintOrder: 'stroke',
+                    stroke: 'rgb(var(--bg-elevated))',
+                    strokeWidth: 4,
+                    strokeLinejoin: 'round',
+                    opacity: isHover || hover === null ? 1 : 0.45,
+                    transition: 'opacity 150ms ease',
+                  }}
+                >
+                  {label}
+                </text>
               </g>
             );
           })}
