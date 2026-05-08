@@ -96,6 +96,42 @@ export function LocalModelsShell() {
   // first run.
   const [runCompletedAt, setRunCompletedAt] = useState<number | null>(null);
 
+  // Last-run persistence: when a campaign finishes (done OR error)
+  // we stash a slim snapshot to localStorage so a refresh restores
+  // the table instead of starting from scratch. Image data URLs are
+  // stripped before saving — they can be megabytes each and exhaust
+  // the origin quota. Stats / output / errors / summary all persist.
+  const HYDRATED_FROM_STORAGE = 'openbench-local:last-run';
+  // Hydrate once on mount.
+  // biome-ignore lint/correctness/useExhaustiveDependencies: intentional one-shot
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(HYDRATED_FROM_STORAGE);
+      if (raw === null) return;
+      const parsed = JSON.parse(raw) as {
+        savedAt: number;
+        runs: ModelRunState[];
+        runCompletedAt: number | null;
+        elapsedMs: number;
+      };
+      if (!Array.isArray(parsed.runs) || parsed.runs.length === 0) return;
+      // Drop any rows that came back with phase 'queued' / 'running'
+      // — those are stale state from a refresh mid-run; we only want
+      // a finished snapshot.
+      const cleaned = parsed.runs.map((r) => ({
+        ...r,
+        inFlight: null,
+        phase: r.phase === 'queued' || r.phase === 'running' ? ('stopped' as RunPhase) : r.phase,
+      }));
+      setRuns(cleaned);
+      setRunCompletedAt(parsed.runCompletedAt ?? parsed.savedAt);
+      setElapsedMs(parsed.elapsedMs ?? 0);
+      setPhase('done');
+    } catch {
+      /* corrupt blob — ignore and start fresh */
+    }
+  }, []);
+
   const startScan = useCallback(async (hostsForScan: readonly string[]) => {
     setPhase('scanning');
     setScan(null);
@@ -266,11 +302,15 @@ export function LocalModelsShell() {
         prev.map((r) => (r.phase === 'queued' ? { ...r, phase: 'stopped' as RunPhase } : r)),
       );
       setPhase('done');
-      setRunCompletedAt(Date.now());
+      const finishedAt = Date.now();
+      setRunCompletedAt(finishedAt);
+      persistLastRun(finishedAt);
     } catch (e) {
       setRunError(e instanceof Error ? e.message : String(e));
       setPhase('error');
-      setRunCompletedAt(Date.now());
+      const finishedAt = Date.now();
+      setRunCompletedAt(finishedAt);
+      persistLastRun(finishedAt);
     } finally {
       globalAbortRef.current = null;
       caseSkipRef.current = null;
@@ -294,9 +334,43 @@ export function LocalModelsShell() {
     setRuns([]);
     setRunError(null);
     setRunStartedAt(null);
+    setRunCompletedAt(null);
     setElapsedMs(0);
     setPhase((p) => (p === 'done' || p === 'error' ? 'ready' : p));
+    try {
+      window.localStorage.removeItem(HYDRATED_FROM_STORAGE);
+    } catch {
+      /* ignore */
+    }
   }, []);
+
+  // Persist a slim snapshot of the just-finished bench so a page
+  // refresh restores the table. Image data URLs are stripped — they
+  // can be megabytes each and bust the origin quota.
+  const persistLastRun = useCallback(
+    (completedAt: number) => {
+      try {
+        const slim = runs.map((r) => ({
+          ...r,
+          inFlight: null,
+          rows: r.rows.map((row) =>
+            row.imageDataUrl !== null ? { ...row, imageDataUrl: null } : row,
+          ),
+        }));
+        const payload = {
+          savedAt: completedAt,
+          runs: slim,
+          runCompletedAt: completedAt,
+          elapsedMs,
+        };
+        window.localStorage.setItem(HYDRATED_FROM_STORAGE, JSON.stringify(payload));
+      } catch {
+        /* quota / private mode — skip silently; the in-memory copy
+           is still fine for this session. */
+      }
+    },
+    [runs, elapsedMs],
+  );
 
   // Elapsed timer: re-render every 500ms while running so the
   // status strip shows wall-clock progress. Cleaned up on unmount or

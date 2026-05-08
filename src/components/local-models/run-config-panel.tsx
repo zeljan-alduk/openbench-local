@@ -33,6 +33,8 @@ const DEFAULTS: Required<Omit<RunConfig, 'reasoningEffort'>> & {
   systemPrompt: '',
   reasoningEffort: 'off',
   warmUp: true,
+  caseTimeoutMs: 120_000,
+  repeatCount: 1,
 };
 
 interface Props {
@@ -280,6 +282,43 @@ export function RunConfigPanel({ value, onChange, enabled, onEnabledChange, disa
               />
               <span className="text-[12px] text-fg-muted">Enabled by default</span>
             </label>
+          </Field>
+
+          <Field
+            label="Per-case timeout"
+            help="Hard wall-clock cap per case. When it fires the request is aborted and the row is recorded as `skipped: timeout`. Set to 0 to disable (a stuck case can then hang the bench until you press Skip / Stop)."
+          >
+            <select
+              value={String(value.caseTimeoutMs ?? DEFAULTS.caseTimeoutMs)}
+              onChange={(e) => set('caseTimeoutMs', Number.parseInt(e.target.value, 10))}
+              disabled={disabled}
+              className="w-32 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+            >
+              <option value="0">off</option>
+              <option value="30000">30s</option>
+              <option value="60000">60s</option>
+              <option value="90000">90s</option>
+              <option value="120000">120s (default)</option>
+              <option value="300000">5 min</option>
+              <option value="600000">10 min</option>
+            </select>
+          </Field>
+
+          <Field
+            label="Repeat each case"
+            help="Run every case N times to surface flakiness (especially with non-zero temperature). The combined row passes only when ALL attempts pass; the score column shows the fraction (e.g. 2/3). Bench wall-clock scales linearly."
+          >
+            <select
+              value={String(value.repeatCount ?? DEFAULTS.repeatCount)}
+              onChange={(e) => set('repeatCount', Number.parseInt(e.target.value, 10))}
+              disabled={disabled}
+              className="w-24 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+            >
+              <option value="1">1× (default)</option>
+              <option value="2">2×</option>
+              <option value="3">3×</option>
+              <option value="5">5×</option>
+            </select>
           </Field>
 
           <div className="sm:col-span-2">

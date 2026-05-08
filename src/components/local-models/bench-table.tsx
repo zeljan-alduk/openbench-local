@@ -262,13 +262,23 @@ function Row({
         </div>
       </td>
       <td className="px-2 py-2 text-center">
-        <span
-          className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${passSym.class}`}
-          aria-label={passSym.label}
-          title={passSym.label}
-        >
-          {passSym.glyph}
-        </span>
+        <div className="inline-flex flex-col items-center gap-0.5">
+          <span
+            className={`inline-flex h-5 w-5 items-center justify-center rounded-full text-[11px] font-semibold ${passSym.class}`}
+            aria-label={passSym.label}
+            title={passSym.label}
+          >
+            {passSym.glyph}
+          </span>
+          {row.attempts !== undefined && row.attempts.length > 1 ? (
+            <span
+              className="font-mono text-[9px] text-fg-faint"
+              title={`${row.attempts.filter((a) => a.passed).length}/${row.attempts.length} attempts passed`}
+            >
+              {row.attempts.filter((a) => a.passed).length}/{row.attempts.length}
+            </span>
+          ) : null}
+        </div>
       </td>
       <td className="px-2 py-2 text-right font-mono tabular-nums text-fg-muted">
         {fmtMs(row.totalMs)}

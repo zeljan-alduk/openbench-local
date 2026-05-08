@@ -44,10 +44,30 @@ export interface CapturedToolCall {
   readonly argumentsRaw: string;
 }
 
+/** One attempt within a repeated case. */
+export interface AttemptResult {
+  readonly passed: boolean;
+  readonly totalMs: number;
+  readonly tokensOut: number | null;
+  readonly skipped?: boolean;
+  readonly skipReason?: string;
+  readonly error?: string;
+}
+
 export interface BenchCaseRow {
   readonly id: string;
   readonly passed: boolean;
+  /**
+   * 0..1. For single-attempt cases this matches the boolean
+   * `passed`. For repeated cases, it's the pass fraction
+   * (e.g. 2/3 = 0.667).
+   */
   readonly score: number;
+  /**
+   * Per-attempt breakdown when `repeatCount > 1`. Undefined for
+   * single-attempt runs to keep payloads small.
+   */
+  readonly attempts?: readonly AttemptResult[];
   readonly totalMs: number;
   readonly ttftMs: number | null;
   readonly tokensIn: number | null;
@@ -134,6 +154,22 @@ export interface RunConfig {
    * model load. Default: true.
    */
   readonly warmUp?: boolean;
+  /**
+   * Hard cap (ms) on a single case's wall-clock time. When the cap
+   * fires, the in-flight request is aborted and the row is recorded
+   * as `skipped: true` with `skipReason: 'timeout'`. 0 / negative =
+   * no timeout (a stuck case can hang the bench until the user hits
+   * Skip / Stop). Default: 120_000 (120s).
+   */
+  readonly caseTimeoutMs?: number;
+  /**
+   * Repeat each case N times to surface flakiness. The combined row
+   * keeps `passed: true` only when every attempt passed; `score`
+   * carries the fraction (passes / attempts). Useful for non-zero
+   * temperature runs where a model might pass once and fail twice on
+   * the same prompt. Default: 1 (single attempt).
+   */
+  readonly repeatCount?: number;
 }
 
 export interface RunBenchOptions {
@@ -185,6 +221,12 @@ export interface RunBenchOptions {
 // Set to 0 in the Setup panel or per-model config to send no
 // max_tokens at all (the engine then uses its model-context budget).
 const DEFAULT_MAX_TOKENS = 8192;
+// Default per-case wall-clock cap. 120s tolerates long-context-recall
+// on slower local engines while still preventing a stuck case from
+// hanging the bench indefinitely (e.g. when the user picked unlimited
+// max_tokens and a model loops). Set caseTimeoutMs to 0 in RunConfig
+// to disable.
+const DEFAULT_CASE_TIMEOUT_MS = 120_000;
 
 /** Run the suite. Returns the final summary. */
 export async function runBenchDirect(opts: RunBenchOptions): Promise<{
@@ -253,45 +295,122 @@ export async function runBenchDirect(opts: RunBenchOptions): Promise<{
       continue;
     }
 
-    // Per-case controller: the global signal AND the user's "Skip"
-    // button both fire through this. Linking the global signal to the
-    // case controller means a single fetch passes one signal, but we
-    // can still tell the two apart afterwards by inspecting which
-    // signal aborted.
-    const caseAc = new AbortController();
-    const onGlobalAbort = () => caseAc.abort();
-    if (opts.signal !== undefined) {
-      if (opts.signal.aborted) caseAc.abort();
-      else opts.signal.addEventListener('abort', onGlobalAbort, { once: true });
+    const repeatCount = Math.max(1, Math.floor(runConfig.repeatCount ?? 1));
+    const caseTimeoutMs = runConfig.caseTimeoutMs ?? DEFAULT_CASE_TIMEOUT_MS;
+
+    const attempts: AttemptResult[] = [];
+    let lastRow: BenchCaseRow | null = null;
+    let userSkipped = false;
+    let timedOut = false;
+
+    for (let attempt = 0; attempt < repeatCount; attempt++) {
+      if (opts.signal?.aborted) break;
+
+      // Per-case + per-attempt controller. The global signal AND the
+      // user's "Skip" button AND the per-case timeout all fire through
+      // the same AbortController; we tell the three apart afterwards
+      // by inspecting which fired first.
+      const caseAc = new AbortController();
+      const onGlobalAbort = () => caseAc.abort();
+      if (opts.signal !== undefined) {
+        if (opts.signal.aborted) caseAc.abort();
+        else opts.signal.addEventListener('abort', onGlobalAbort, { once: true });
+      }
+      let attemptTimedOut = false;
+      let attemptSkipped = false;
+      const skip = () => {
+        attemptSkipped = true;
+        userSkipped = true;
+        caseAc.abort();
+      };
+      const timer =
+        caseTimeoutMs > 0
+          ? setTimeout(() => {
+              attemptTimedOut = true;
+              timedOut = true;
+              caseAc.abort();
+            }, caseTimeoutMs)
+          : null;
+      opts.onCaseStart?.(c.id, skip);
+
+      const baseRow = await runOne(c, {
+        chatBaseUrl: opts.chatBaseUrl,
+        modelId: opts.modelId,
+        maxTokens: runConfig.maxTokens ?? opts.maxTokens ?? DEFAULT_MAX_TOKENS,
+        signal: caseAc.signal,
+        runConfig,
+        ...(opts.onCaseProgress !== undefined
+          ? {
+              onProgress: (partial: { content: string; reasoning: string }) =>
+                opts.onCaseProgress?.(c.id, partial),
+            }
+          : {}),
+      });
+      if (timer !== null) clearTimeout(timer);
+      opts.signal?.removeEventListener('abort', onGlobalAbort);
+
+      const aborted = caseAc.signal.aborted && !(opts.signal?.aborted ?? false);
+      const reason = attemptTimedOut
+        ? `timeout (${Math.round(caseTimeoutMs / 1000)}s)`
+        : attemptSkipped
+          ? 'user skipped'
+          : null;
+      const attemptRow: BenchCaseRow =
+        aborted && reason !== null
+          ? stripError({
+              ...baseRow,
+              passed: false,
+              score: 0,
+              skipped: true,
+              skipReason: reason,
+            })
+          : baseRow;
+      attempts.push({
+        passed: attemptRow.passed,
+        totalMs: attemptRow.totalMs,
+        tokensOut: attemptRow.tokensOut,
+        ...(attemptRow.skipped !== undefined ? { skipped: attemptRow.skipped } : {}),
+        ...(attemptRow.skipReason !== undefined ? { skipReason: attemptRow.skipReason } : {}),
+        ...(attemptRow.error !== undefined ? { error: attemptRow.error } : {}),
+      });
+      lastRow = attemptRow;
+
+      // If the user pressed Skip mid-attempt, don't keep retrying —
+      // they wanted to move on. Timeouts on the other hand still
+      // exhaust the configured repeat count, since the user might be
+      // sampling reliability against a slow engine on purpose.
+      if (attemptSkipped || opts.signal?.aborted) break;
     }
-    opts.onCaseStart?.(c.id, () => caseAc.abort());
 
-    const baseRow = await runOne(c, {
-      chatBaseUrl: opts.chatBaseUrl,
-      modelId: opts.modelId,
-      maxTokens: runConfig.maxTokens ?? opts.maxTokens ?? DEFAULT_MAX_TOKENS,
-      signal: caseAc.signal,
-      runConfig,
-      ...(opts.onCaseProgress !== undefined
-        ? { onProgress: (partial) => opts.onCaseProgress?.(c.id, partial) }
-        : {}),
-    });
-    opts.signal?.removeEventListener('abort', onGlobalAbort);
-
-    const skipped = caseAc.signal.aborted && !(opts.signal?.aborted ?? false);
-    const row: BenchCaseRow = skipped
-      ? // Drop the noisy "AbortError" message for deliberate skips so the
-        // table reads as "user skipped" rather than "case errored out".
-        stripError({
-          ...baseRow,
-          passed: false,
-          score: 0,
-          skipped: true,
-          skipReason: 'user skipped',
-        })
-      : baseRow;
-    rows.push(row);
-    opts.onCase(row, i);
+    // Combine attempts into a single row. For single-attempt runs
+    // this preserves the previous shape exactly (no `attempts` field
+    // on the wire). For multi-attempt runs:
+    //   - `passed` = strict all-pass (every attempt scored). The
+    //     bench is benchmarking RELIABILITY, so the strict definition
+    //     is the honest one.
+    //   - `score` = fraction (passes / attempts) so the per-tag
+    //     summary still shows partial credit.
+    //   - `skipped` only set when ALL attempts skipped.
+    if (lastRow !== null) {
+      const passes = attempts.filter((a) => a.passed).length;
+      const allSkipped = attempts.length > 0 && attempts.every((a) => a.skipped === true);
+      const combined: BenchCaseRow = {
+        ...lastRow,
+        passed: attempts.length > 0 && passes === attempts.length,
+        score: attempts.length > 0 ? passes / attempts.length : 0,
+        ...(attempts.length > 1 ? { attempts } : {}),
+        ...(allSkipped
+          ? {
+              skipped: true,
+              skipReason: timedOut ? `timeout × ${attempts.length}` : 'user skipped',
+            }
+          : {}),
+      };
+      rows.push(combined);
+      opts.onCase(combined, i);
+    }
+    if (userSkipped && opts.signal?.aborted) break;
+    void timedOut;
   }
   return { rows, summary: summarise(rows) };
 }
