@@ -175,7 +175,7 @@ export function ModelConfigModal({
 
             <div>
               <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
-                Reasoning effort
+                Thinking mode
               </p>
               <select
                 value={draft.reasoningEffort ?? '__inherit__'}
@@ -186,14 +186,18 @@ export function ModelConfigModal({
                     void _drop;
                     setDraft(rest);
                   } else {
-                    setDraft({ ...draft, reasoningEffort: v as 'low' | 'medium' | 'high' });
+                    setDraft({
+                      ...draft,
+                      reasoningEffort: v as 'off' | 'low' | 'medium' | 'high',
+                    });
                   }
                 }}
                 className="mt-1 w-full rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none"
               >
                 <option value="__inherit__">
-                  inherit ({globalConfig.reasoningEffort ?? 'off'})
+                  inherit ({globalConfig.reasoningEffort ?? 'engine default'})
                 </option>
+                <option value="off">off — suppress thinking</option>
                 <option value="low">low</option>
                 <option value="medium">medium</option>
                 <option value="high">high</option>

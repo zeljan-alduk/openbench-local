@@ -91,6 +91,10 @@ export function LocalModelsShell() {
   // Wall-clock start of the in-flight bench, for the elapsed timer.
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [elapsedMs, setElapsedMs] = useState<number>(0);
+  // Wall-clock timestamp (epoch ms) of the moment the campaign moved
+  // to `done`. Reset on each new run; null while running / before
+  // first run.
+  const [runCompletedAt, setRunCompletedAt] = useState<number | null>(null);
 
   const startScan = useCallback(async (hostsForScan: readonly string[]) => {
     setPhase('scanning');
@@ -147,6 +151,7 @@ export function LocalModelsShell() {
     if (selectedList.length === 0) return;
     setRunError(null);
     setPhase('running');
+    setRunCompletedAt(null);
     const ac = new AbortController();
     globalAbortRef.current = ac;
 
@@ -261,9 +266,11 @@ export function LocalModelsShell() {
         prev.map((r) => (r.phase === 'queued' ? { ...r, phase: 'stopped' as RunPhase } : r)),
       );
       setPhase('done');
+      setRunCompletedAt(Date.now());
     } catch (e) {
       setRunError(e instanceof Error ? e.message : String(e));
       setPhase('error');
+      setRunCompletedAt(Date.now());
     } finally {
       globalAbortRef.current = null;
       caseSkipRef.current = null;
@@ -414,6 +421,32 @@ export function LocalModelsShell() {
         ? '1 model selected — pick more to compare side-by-side.'
         : `${selectedList.length} models selected — they will run sequentially.`;
 
+  // Token-weighted average tok/s across all completed model runs.
+  // Falls back to a simple mean of per-model averages when token
+  // counts aren't reported by the engine.
+  const overallAvgTokps = useMemo<number | null>(() => {
+    if (phase !== 'done' && phase !== 'error') return null;
+    let totalTokens = 0;
+    let totalSeconds = 0;
+    let avgSum = 0;
+    let avgCount = 0;
+    for (const r of runs) {
+      for (const row of r.rows) {
+        if (row.tokensOut !== null && row.tokensOut > 0 && row.totalMs > 0) {
+          totalTokens += row.tokensOut;
+          totalSeconds += row.totalMs / 1000;
+        }
+        if (row.tokPerSec !== null) {
+          avgSum += row.tokPerSec;
+          avgCount += 1;
+        }
+      }
+    }
+    if (totalSeconds > 0) return totalTokens / totalSeconds;
+    if (avgCount > 0) return avgSum / avgCount;
+    return null;
+  }, [runs, phase]);
+
   return (
     <div className="flex flex-col gap-6">
       <StatusStrip
@@ -430,6 +463,9 @@ export function LocalModelsShell() {
         estimateMs={
           phase === 'running' ? estimateRemaining(elapsedMs, completedRows, totalRows) : null
         }
+        runCompletedAt={runCompletedAt}
+        runDurationMs={phase === 'done' ? elapsedMs : null}
+        overallAvgTokps={overallAvgTokps}
       />
 
       <section className="rounded-2xl border border-border bg-bg-elevated shadow-sm">
@@ -653,6 +689,9 @@ function StatusStrip({
   progressLabel,
   elapsedMs,
   estimateMs,
+  runCompletedAt,
+  runDurationMs,
+  overallAvgTokps,
 }: {
   phase: Phase;
   scan: DiscoverDirectResult | null;
@@ -661,6 +700,9 @@ function StatusStrip({
   progressLabel: string | null;
   elapsedMs: number | null;
   estimateMs: number | null;
+  runCompletedAt: number | null;
+  runDurationMs: number | null;
+  overallAvgTokps: number | null;
 }) {
   return (
     <div className="flex flex-wrap items-center gap-3 rounded-xl border border-border bg-bg-elevated px-4 py-3 shadow-sm print:hidden">
@@ -696,8 +738,22 @@ function StatusStrip({
         ) : phase === 'done' ? (
           <>
             Run complete
-            {elapsedMs !== null && elapsedMs > 0 ? (
-              <span className="ml-1 text-fg-faint">in {fmtElapsed(elapsedMs)}</span>
+            {runDurationMs !== null && runDurationMs > 0 ? (
+              <span className="ml-1 text-fg-faint">in {fmtElapsed(runDurationMs)}</span>
+            ) : null}
+            {runCompletedAt !== null ? (
+              <span className="ml-1 text-fg-faint">
+                · finished at{' '}
+                <span className="font-mono text-fg" title={new Date(runCompletedAt).toLocaleString()}>
+                  {fmtClockTime(runCompletedAt)}
+                </span>
+              </span>
+            ) : null}
+            {overallAvgTokps !== null ? (
+              <span className="ml-1 text-fg-faint">
+                · avg{' '}
+                <span className="font-mono text-fg">{overallAvgTokps.toFixed(1)} tok/s</span>
+              </span>
             ) : null}
             .
           </>
@@ -726,6 +782,16 @@ function StatusStrip({
       </button>
     </div>
   );
+}
+
+function fmtClockTime(epochMs: number): string {
+  // Local-time HH:MM:SS — short enough to fit in the strip, precise
+  // enough to correlate with engine logs / dashboards.
+  const d = new Date(epochMs);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  const ss = String(d.getSeconds()).padStart(2, '0');
+  return `${hh}:${mm}:${ss}`;
 }
 
 function fmtElapsed(ms: number): string {

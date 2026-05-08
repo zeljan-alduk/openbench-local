@@ -111,8 +111,23 @@ export interface RunConfig {
   readonly seed?: number;
   /** System message prepended to every case. Empty string = no system message. */
   readonly systemPrompt?: string;
-  /** Reasoning-effort hint for o1/qwq/r1-style models. Ignored elsewhere. */
-  readonly reasoningEffort?: 'low' | 'medium' | 'high';
+  /**
+   * Thinking-mode control.
+   *
+   *   - 'low' / 'medium' / 'high' → sent verbatim as `reasoning_effort`
+   *     on the chat-completion body. gpt-oss honours this natively;
+   *     DeepSeek-R1 and QwQ honour it via some providers; most other
+   *     models silently ignore it.
+   *   - 'off' → best-effort suppression. We DON'T send the
+   *     `reasoning_effort` field, AND we prepend a no-thinking
+   *     directive to the system message ("/no_think" works for
+   *     Qwen3; the plain-English instruction covers the rest).
+   *     Always-thinking models (e.g. QwQ-32B) may ignore it; for a
+   *     hard guarantee, pick a non-reasoning model.
+   *   - undefined → don't override; fall through to the engine
+   *     default.
+   */
+  readonly reasoningEffort?: 'off' | 'low' | 'medium' | 'high';
   /**
    * Send a tiny "respond with OK" before case 1 so the first real
    * case's TTFT reflects steady-state inference instead of cold
@@ -417,9 +432,21 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
   // Build the messages array. When the user has set a system prompt
   // in the Setup panel, prepend a system message; otherwise omit it
   // so providers that mis-handle empty system messages aren't poked.
+  //
+  // Thinking-off branch: when reasoningEffort === 'off', prepend a
+  // best-effort no-thinking directive that covers multiple model
+  // conventions in one message — `/no_think` is the magic word for
+  // Qwen3, the plain-English instruction is what every instruction-
+  // tuned model can follow. Reasoning-locked models (QwQ etc.) may
+  // ignore it; that's the model's fault, not the alat's.
   const messages: Array<{ role: string; content: unknown }> = [];
   const sysPrompt = (cfg.systemPrompt ?? '').trim();
-  if (sysPrompt.length > 0) messages.push({ role: 'system', content: sysPrompt });
+  const noThink =
+    cfg.reasoningEffort === 'off'
+      ? "/no_think\nReply directly. Do not think out loud, do not produce <think>...</think> tags, no chain-of-thought."
+      : '';
+  const combinedSys = [noThink, sysPrompt].filter((s) => s.length > 0).join('\n\n');
+  if (combinedSys.length > 0) messages.push({ role: 'system', content: combinedSys });
   messages.push({ role: 'user', content: userContent });
 
   const body: Record<string, unknown> = {
@@ -437,7 +464,12 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
   if (ctx.maxTokens > 0) body.max_tokens = ctx.maxTokens;
   if (typeof cfg.topP === 'number') body.top_p = cfg.topP;
   if (typeof cfg.seed === 'number') body.seed = cfg.seed;
-  if (cfg.reasoningEffort !== undefined) body.reasoning_effort = cfg.reasoningEffort;
+  // 'off' is our own sentinel — handled via the system-message
+  // directive above. Don't ship it on the wire; not all engines
+  // understand "off" and some throw on unknown enum values.
+  if (cfg.reasoningEffort !== undefined && cfg.reasoningEffort !== 'off') {
+    body.reasoning_effort = cfg.reasoningEffort;
+  }
   if (c.tools !== undefined && c.tools.length > 0) {
     body.tools = c.tools;
     // tool_choice 'auto' is the OpenAI-compat default; we still set it

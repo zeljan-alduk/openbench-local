@@ -224,25 +224,42 @@ export function RunConfigPanel({ value, onChange, enabled, onEnabledChange, disa
           </Field>
 
           <Field
-            label="Reasoning effort"
-            help="For o1 / qwq / deepseek-r1 / qwen3-thinking. Ignored by non-reasoning models."
+            label="Thinking mode"
+            help={
+              <>
+                <strong>engine default</strong> — don't override; whatever the model normally
+                does.{' '}
+                <strong>off</strong> — actively suppress thinking (skips the{' '}
+                <code className="font-mono">reasoning_effort</code> field AND prepends a
+                no-thinking directive to the system prompt:{' '}
+                <code className="font-mono">/no_think</code> for Qwen3 + a plain-English
+                instruction for everything else).{' '}
+                <strong>low / medium / high</strong> — sent verbatim as{' '}
+                <code className="font-mono">reasoning_effort</code>; honoured natively by gpt-oss
+                and via some providers by DeepSeek-R1 / QwQ; non-reasoning models silently
+                ignore it. Always-thinking models (QwQ-32B, some R1 variants) may ignore{' '}
+                <code className="font-mono">off</code> too — for a hard guarantee, pick a
+                non-reasoning model.
+              </>
+            }
           >
             <select
-              value={value.reasoningEffort ?? 'off'}
+              value={value.reasoningEffort ?? '__default__'}
               onChange={(e) => {
                 const v = e.target.value;
-                if (v === 'off') {
+                if (v === '__default__') {
                   const { reasoningEffort: _drop, ...rest } = value;
                   void _drop;
                   onChange(rest);
                 } else {
-                  set('reasoningEffort', v as 'low' | 'medium' | 'high');
+                  set('reasoningEffort', v as 'off' | 'low' | 'medium' | 'high');
                 }
               }}
               disabled={disabled}
-              className="w-32 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
+              className="w-44 rounded border border-border bg-bg px-2 py-1 font-mono text-[12px] text-fg focus:border-accent focus:outline-none disabled:opacity-50"
             >
-              <option value="off">off (default)</option>
+              <option value="__default__">engine default</option>
+              <option value="off">off — suppress</option>
               <option value="low">low</option>
               <option value="medium">medium</option>
               <option value="high">high</option>
@@ -292,7 +309,7 @@ function Field({
   children,
 }: {
   label: string;
-  help?: string;
+  help?: React.ReactNode;
   children: React.ReactNode;
 }) {
   return (
