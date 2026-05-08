@@ -21,6 +21,7 @@ import { useState } from 'react';
 import type { BenchCaseRow, BenchSummary } from './bench-direct';
 import { BenchTable } from './bench-table';
 import type { DiscoveredLocalModel } from './discovery-direct';
+import { QualitySpeedChart } from './quality-speed-chart';
 
 export type RunPhase = 'queued' | 'running' | 'done' | 'stopped' | 'error';
 
@@ -63,6 +64,7 @@ export function MultiBenchPanel({ runs, suiteCases, onRetryCase }: Props) {
       {showCompare ? (
         <>
           <ComparisonStrip runs={runs} />
+          <QualitySpeedChart runs={runs} />
           <div className="flex items-center justify-end gap-1 print:hidden">
             <span className="text-[11px] text-fg-muted">View:</span>
             <ToggleBtn active={view === 'by-model'} onClick={() => setView('by-model')}>
