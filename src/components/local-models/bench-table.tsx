@@ -58,10 +58,26 @@ export function BenchTable({ rows, summary, runError, suiteCases, inFlight, onRe
       ) : null}
 
       <div className="overflow-x-auto rounded-lg border border-border bg-bg">
-        <table className="w-full text-sm">
+        <table className="w-full table-fixed text-sm">
+          {/* Fixed widths so columns don't reflow every time the in-flight
+              streaming row's content grows. Without this, every token
+              appended to the live "reasoning" preview re-runs the table
+              layout algorithm and the numeric columns visibly jitter
+              left and right as the row's text width changes. */}
+          <colgroup>
+            <col className="w-7" />
+            <col />
+            <col className="w-[68px]" />
+            <col className="w-[80px]" />
+            <col className="w-[80px]" />
+            <col className="w-[72px]" />
+            <col className="w-[80px]" />
+            <col className="w-[72px]" />
+            <col className="w-[120px]" />
+          </colgroup>
           <thead>
             <tr className="border-b border-border bg-bg-subtle/40 text-[10px] uppercase tracking-wide text-fg-muted">
-              <th className="w-7 px-2 py-2" aria-label="expand" />
+              <th className="px-2 py-2" aria-label="expand" />
               <th className="px-3 py-2 text-left font-medium">Case</th>
               <th className="px-2 py-2 text-center font-medium">Pass</th>
               <th className="px-2 py-2 text-right font-medium">Total</th>
