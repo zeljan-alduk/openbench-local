@@ -688,10 +688,12 @@ function Stat({
 function LiveRow({ inFlight }: { inFlight: InFlightCase }) {
   const elapsedMs = typeof performance === 'undefined' ? 0 : performance.now() - inFlight.startedAt;
   const preview = inFlight.content.length > 0 ? inFlight.content : inFlight.reasoning;
-  // Tail-anchored preview: the SSE chunks land at the end, and a
-  // mid-stream "..." prefix reads naturally to a viewer who sees the
-  // end of the partial answer.
-  const tail = preview.length > 80 ? `…${preview.slice(-80)}` : preview;
+  // Show a generous tail so the bottom-anchored container has room to
+  // visibly scroll. Older chars overflow off the top of the viewport
+  // and disappear via `overflow-hidden` — newest text always at the
+  // bottom edge, so the streaming reads as a terminal "tail -f"
+  // movement upward instead of jittering horizontally.
+  const tail = preview.length > 600 ? `…${preview.slice(-600)}` : preview;
   return (
     <tr className="animate-fade-in border-b border-border/60 last:border-0 bg-accent/5 print:hidden">
       <td className="px-2 py-2 text-center align-top">
@@ -708,9 +710,13 @@ function LiveRow({ inFlight }: { inFlight: InFlightCase }) {
         </div>
       </td>
       <td colSpan={7} className="px-2 py-2 align-top">
-        <div className="font-mono text-[11px] text-fg-muted">
+        {/* Fixed-height container with `flex-col justify-end` and
+            `overflow-hidden` anchors the latest chars to the bottom.
+            As new tokens arrive, the text pushes upward and old chars
+            clip off the top — same visual feel as a streaming log. */}
+        <div className="flex h-16 flex-col justify-end overflow-hidden font-mono text-[11px] leading-relaxed text-fg-muted">
           {tail.length > 0 ? (
-            <span className="line-clamp-2 break-words">{tail}</span>
+            <pre className="m-0 whitespace-pre-wrap break-words">{tail}</pre>
           ) : (
             <span className="text-fg-faint">awaiting first token…</span>
           )}
