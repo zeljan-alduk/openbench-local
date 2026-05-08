@@ -148,6 +148,22 @@ export function QualitySpeedChart({ runs }: Props) {
   const yTicks = [0, 0.25, 0.5, 0.75, 1];
   const xTicks = [0, 0.25, 0.5, 0.75, 1].map((p) => p * maxTokps);
 
+  // Bubble-size encoding for the third dimension: total wall-clock
+  // time per model. Bigger dot = more total time (slower campaign);
+  // smaller dot = faster. We pin the size range to [6, 16] so the
+  // smallest is still hoverable and the biggest doesn't crowd
+  // neighbours. When every model has the same totalMs (single-case
+  // runs etc.) we fall back to a constant middle size.
+  const minMs = Math.min(...points.map((p) => p.totalMs));
+  const maxMs = Math.max(...points.map((p) => p.totalMs));
+  const sizeFor = (ms: number): number => {
+    if (maxMs === minMs) return 10;
+    const t = (ms - minMs) / (maxMs - minMs);
+    return 6 + t * 10;
+  };
+  const fastestPoint = points.reduce((a, b) => (a.totalMs <= b.totalMs ? a : b));
+  const slowestPoint = points.reduce((a, b) => (a.totalMs >= b.totalMs ? a : b));
+
   // Per-model legend chips. Reads top-down with the chart so the
   // user can map name → colour at a glance for crowded plots.
   const legend = points;
@@ -163,8 +179,10 @@ export function QualitySpeedChart({ runs }: Props) {
             Pareto frontier across {points.length} model{points.length === 1 ? '' : 's'}
           </h2>
           <p className="mt-1 max-w-xl text-xs leading-relaxed text-fg-muted">
-            Each dot is one model. Up = higher pass-rate, right = faster mean throughput. The
-            dashed line connects models on the Pareto frontier — they're not dominated on both
+            Each dot is one model. <strong className="text-fg">Up</strong> = higher pass-rate,{' '}
+            <strong className="text-fg">right</strong> = faster mean throughput,{' '}
+            <strong className="text-fg">smaller dot</strong> = shorter total bench wall-clock.
+            The dashed line connects models on the Pareto frontier — they're not dominated on both
             axes by anyone else, so they're the rational choices for any quality / speed trade-off.
           </p>
         </div>
@@ -292,13 +310,15 @@ export function QualitySpeedChart({ runs }: Props) {
             />
           ) : null}
 
-          {/* Frontier markers — small ring under Pareto-optimal points. */}
+          {/* Frontier markers — soft coloured ring under Pareto-
+              optimal points. Ring scales with the dot so the ratio
+              stays consistent at any size. */}
           {frontier.map((p) => (
             <circle
               key={`ring-${p.id}-${p.source}`}
               cx={xScale(p.avgTokPerSec)}
               cy={yScale(p.passRate)}
-              r={14}
+              r={sizeFor(p.totalMs) + 6}
               fill="none"
               stroke={p.color}
               strokeWidth={1.5}
@@ -315,13 +335,18 @@ export function QualitySpeedChart({ runs }: Props) {
             const cx = xScale(p.avgTokPerSec);
             const cy = yScale(p.passRate);
             const isHover = hover === p;
+            const baseR = sizeFor(p.totalMs);
+            const r = isHover ? baseR + 4 : baseR;
             const label = shortId(p.id);
             // Flip the label when the dot is in the right ~25% so the
             // text doesn't run off the plot. Same idea for top edge.
+            // Offset scales with the dot size so labels don't overlap
+            // larger bubbles.
             const flipX = cx > PAD_L + PLOT_W * 0.72;
             const flipY = cy < PAD_T + PLOT_H * 0.12;
-            const labelX = flipX ? cx - 14 : cx + 14;
-            const labelY = flipY ? cy + 20 : cy - 14;
+            const off = baseR + 6;
+            const labelX = flipX ? cx - off : cx + off;
+            const labelY = flipY ? cy + off + 12 : cy - off - 4;
             return (
               <g
                 key={`pt-${p.id}-${p.source}`}
@@ -335,14 +360,14 @@ export function QualitySpeedChart({ runs }: Props) {
                 <circle
                   cx={cx}
                   cy={cy}
-                  r={18}
+                  r={Math.max(r + 6, 16)}
                   fill="transparent"
                   className="cursor-crosshair"
                 />
                 <circle
                   cx={cx}
                   cy={cy}
-                  r={isHover ? 11 : 8}
+                  r={r}
                   fill={p.color}
                   stroke="rgb(var(--bg-elevated))"
                   strokeWidth={2}
@@ -371,6 +396,36 @@ export function QualitySpeedChart({ runs }: Props) {
         </svg>
 
         {hover !== null ? <Tooltip point={hover} maxTokps={maxTokps} /> : null}
+
+        {/* Size-scale legend — only meaningful when total times
+            actually differ across the run. */}
+        {fastestPoint !== slowestPoint ? (
+          <div className="mt-2 flex items-center justify-end gap-3 px-3 text-[11px] text-fg-muted">
+            <span className="inline-flex items-center gap-1.5">
+              <svg width={20} height={20} aria-hidden>
+                <circle cx={10} cy={10} r={5} className="fill-fg-muted" />
+              </svg>
+              <span>
+                fastest{' '}
+                <span className="font-mono text-fg">
+                  {(fastestPoint.totalMs / 1000).toFixed(1)} s
+                </span>
+              </span>
+            </span>
+            <span className="text-fg-faint">→</span>
+            <span className="inline-flex items-center gap-1.5">
+              <svg width={28} height={28} aria-hidden>
+                <circle cx={14} cy={14} r={11} className="fill-fg-muted" />
+              </svg>
+              <span>
+                slowest{' '}
+                <span className="font-mono text-fg">
+                  {(slowestPoint.totalMs / 1000).toFixed(1)} s
+                </span>
+              </span>
+            </span>
+          </div>
+        ) : null}
       </div>
 
       {/* Hidden table for screen readers — same data, navigable. */}
