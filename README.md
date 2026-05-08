@@ -41,13 +41,25 @@ are described in [CI / CD](#ci--cd) below.
 
 1. **Probes `127.0.0.1`** for any OpenAI-compatible LLM server — Ollama,
    LM Studio, vLLM, llama.cpp, and any custom host you add.
-2. **Runs an 18-case eval suite** against every model you select —
-   instruction-following, JSON output, code reasoning, retrieval, native
-   tool calls, and vision (counting, OCR, spatial). Cases auto-skip on
-   models that lack the required capability.
+2. **Runs a 48-case eval suite** against every model you select —
+   instruction-following, JSON output, code reasoning, mid- and
+   long-context retrieval, multi-step inference, refusal, arithmetic
+   (decimal / hex / binary / modular), character-level gotchas
+   (counting letters, palindromes, anagrams, reversal), classification
+   (sentiment, spam, enum, odd-one-out), date math, set operations,
+   prompt-injection resistance, native tool calling, and vision
+   (counting, OCR, spatial). Cases auto-skip on models that lack the
+   required capability.
+
+   Typical wall-clock for a single model on a modern laptop is
+   **~5–8 minutes** (closer to 3 min for a fast 7B, 10–15 min for a
+   reasoning model with high effort). The runner is sequential per
+   model so multi-model comparisons scale linearly.
 3. **Streams results live** as each case finishes, with pass-rate, mean
-   tok/s, and p95 latency per model, plus a side-by-side comparison
-   when you pick more than one.
+   tok/s, p95 latency, and total wall-clock per model. When you pick
+   two or more models, an interactive **Quality × Speed scatter**
+   surfaces the Pareto frontier — bubble size encodes total bench
+   time, dot colour is unique per model, hover for a detail card.
 4. **Exports everything** — interactive HTML (collapsible, printable,
    single self-contained file), Markdown, JSON, or print-to-PDF.
 
@@ -143,7 +155,7 @@ Mixed content evaporates and PNA does not apply.
 
 ## How the eval suite works
 
-The 18 cases are inlined in
+The 48 cases are inlined in
 [`src/components/local-models/builtin-suite.ts`](src/components/local-models/builtin-suite.ts).
 Each case has:
 
@@ -160,13 +172,58 @@ LLM-as-judge, no network round-trip, deterministic.
 ## Generation parameters
 
 The "Setup" panel (between Discover and Run) sets a global generation
-profile: `temperature`, `top_p`, `max_tokens`, `seed`,
-`reasoning_effort`, optional warm-up call, and a system prompt. Toggle
-it off to use each engine's defaults.
+profile: `temperature`, `top_p`, `max_tokens`, `seed`, **thinking
+mode** (`engine default` / `off — suppress` / `low` / `medium` / `high`),
+**per-case timeout**, **repeat each case N×** (1 / 2 / 3 / 5 to
+surface flakiness), optional warm-up call, and a system prompt.
+Toggle the **Override** switch (off by default) to make these win
+across every model; otherwise the engine's own defaults apply for any
+field you leave blank.
 
-Per-model overrides are available too — gear icon on a model card.
-Precedence: global panel wins for any field it sets, per-model overrides
-fill in the rest.
+Per-model overrides are available via the gear icon on a model card,
+including a **Pull from engine** button that reads the model's
+loaded sampling defaults straight from the engine
+(Ollama Modelfile / llama.cpp `/props` / LM Studio metadata) so the
+bench respects whatever you configured upstream.
+
+Precedence: per-model override → global override (when the switch is
+on) → engine default. Open DevTools → Network → any
+`chat/completions` request → Payload tab to see the exact JSON we
+shipped.
+
+## Quality × Speed scatter chart
+
+When two or more models are benched, an interactive scatter plot
+materialises above the per-case grid with three encoded dimensions
+plus engine identity:
+
+| Encoding | What it shows |
+| --- | --- |
+| **Y axis** | Pass rate (0–100%) — higher = better quality |
+| **X axis** | Mean tokens / second — right = faster throughput |
+| **Bubble size** | Total bench wall-clock time — smaller = faster overall |
+| **Bubble colour** | Deterministic per `source::id::port` (same model = same shade across reruns) |
+| **Dashed accent line** | Pareto frontier — non-dominated set; rational picks for any quality / speed trade-off |
+| **Soft coloured ring** | Marks frontier members |
+
+Polish:
+
+- **Per-model labels** next to each dot (model id, truncated at 28
+  chars, in the dot's own colour with a `paint-order: stroke`
+  bg-elevated outline so they read cleanly over gridlines).
+- **Collision-aware placement** — labels try 8 candidate positions
+  (cardinal + diagonal); Pareto-frontier and high-pass-rate models
+  get first pick so headline dots stay unobstructed.
+- **Hover** (or keyboard focus) on any dot or legend chip pops a
+  tooltip with model id, source + endpoint, exact pass-rate,
+  passed/total, avg tok/s, p95 latency, total wall-clock. Auto-flips
+  near canvas edges.
+- **Size legend** below the chart shows two reference dots scaled to
+  the actual fastest / slowest run-times, so the encoding is grounded
+  in real numbers instead of a blanket "smaller = faster" claim.
+- Renders nothing for a single model (no comparison to make).
+- Pure inline SVG, no chart library — ~+8 KB to the bundle vs. ~+200
+  KB if we'd pulled in recharts.
 
 ## Editable eval suite
 
@@ -202,7 +259,7 @@ a full case-editor:
     → explicit refusal with an "extract text first" hint, since local
     chat-completion APIs don't accept those bytes.
 - **Reset** any built-in to its default; **Delete** any custom; or
-  **Reset all** to roll back the entire suite to the shipped 18 cases.
+  **Reset all** to roll back the entire suite to the shipped 48 cases.
 - **Export YAML** — every case in the user's order. **Import YAML** —
   accepts the wrapper shape, a bare list, or a `{ suite: { cases } }`
   block.

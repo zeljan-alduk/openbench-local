@@ -26,14 +26,17 @@ export function App() {
           <p className="mx-auto mt-4 max-w-2xl text-base leading-relaxed text-fg-muted">
             The browser probes <span className="font-mono text-fg">127.0.0.1</span> (and any custom
             hosts you add) for any OpenAI-compatible LLM (Ollama, LM Studio, vLLM, llama.cpp), then
-            runs an 18-case eval suite — instruction-following, JSON, reasoning, retrieval, native
-            tool calls, and vision — streamed live as each case finishes.
+            runs a 48-case eval suite — instruction-following, JSON output, code reasoning,
+            retrieval, native tool calls, vision, character-level gotchas (palindrome, anagram,
+            reverse, count-letters), arithmetic (decimal, hex, binary, modular), classification
+            (sentiment, spam, enum), date math, set ops, prompt-injection resistance — streamed
+            live as each case finishes.
           </p>
           <ul className="mx-auto mt-6 flex flex-wrap items-center justify-center gap-x-5 gap-y-2 text-[12px] text-fg-muted">
             <Pill>100% client-side</Pill>
             <Pill>No API key</Pill>
             <Pill>Nothing leaves localhost</Pill>
-            <Pill>18 eval cases · &lt;3 min</Pill>
+            <Pill>48 eval cases · ~5-8 min</Pill>
             <Pill>MIT licensed</Pill>
           </ul>
         </header>
