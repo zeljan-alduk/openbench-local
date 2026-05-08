@@ -164,6 +164,142 @@ export function QualitySpeedChart({ runs }: Props) {
   const fastestPoint = points.reduce((a, b) => (a.totalMs <= b.totalMs ? a : b));
   const slowestPoint = points.reduce((a, b) => (a.totalMs >= b.totalMs ? a : b));
 
+  // Greedy collision-aware label placement. Important models get first
+  // pick of position; everyone else has to fit around them. Each label
+  // tries 8 candidate offsets (cardinal + diagonal) and picks the
+  // first that (a) stays inside the plot frame and (b) doesn't overlap
+  // any already-placed label or dot. Falls back to the top-right
+  // default when nothing fits.
+  interface Placement {
+    readonly point: Point;
+    readonly cx: number;
+    readonly cy: number;
+    readonly baseR: number;
+    readonly textX: number;
+    readonly textY: number;
+    readonly anchor: 'start' | 'end' | 'middle';
+    readonly box: { x: number; y: number; w: number; h: number };
+  }
+  // Priority: Pareto-frontier dots first (they're the headline result),
+  // then everyone else by pass-rate desc so high-quality models get
+  // unobstructed labels even on crowded charts.
+  const frontierIds = new Set(frontier.map((p) => p.id + p.source));
+  const orderedPoints = [...points].sort((a, b) => {
+    const aFront = frontierIds.has(a.id + a.source) ? 1 : 0;
+    const bFront = frontierIds.has(b.id + b.source) ? 1 : 0;
+    if (aFront !== bFront) return bFront - aFront;
+    return b.passRate - a.passRate;
+  });
+  const placements: Placement[] = [];
+  // Approximate font metrics for the 11px mono text. Used purely for
+  // overlap detection — visual rendering still uses the actual SVG.
+  const FONT_CHAR_W = 6.6;
+  const FONT_LINE_H = 14;
+  // Plot bounds (with a small margin so labels can flirt with the
+  // edge but not run off the canvas).
+  const PLOT_BOUNDS = {
+    x0: PAD_L - 2,
+    y0: PAD_T - 2,
+    x1: PAD_L + PLOT_W + 2,
+    y1: PAD_T + PLOT_H + 2,
+  };
+
+  for (const p of orderedPoints) {
+    const cx = xScale(p.avgTokPerSec);
+    const cy = yScale(p.passRate);
+    const baseR = sizeFor(p.totalMs);
+    const labelText = shortId(p.id);
+    const labelW = labelText.length * FONT_CHAR_W + 4;
+    const off = baseR + 6;
+    const offFar = baseR + 12;
+    type Candidate = { dx: number; dy: number; anchor: 'start' | 'end' | 'middle' };
+    const candidates: readonly Candidate[] = [
+      { dx: off, dy: -off, anchor: 'start' },
+      { dx: -off, dy: -off, anchor: 'end' },
+      { dx: off, dy: off + 12, anchor: 'start' },
+      { dx: -off, dy: off + 12, anchor: 'end' },
+      { dx: 0, dy: -offFar, anchor: 'middle' },
+      { dx: 0, dy: offFar + 12, anchor: 'middle' },
+      { dx: offFar + 4, dy: 4, anchor: 'start' },
+      { dx: -offFar - 4, dy: 4, anchor: 'end' },
+    ];
+
+    const boxFor = (c: Candidate): { x: number; y: number; w: number; h: number } => {
+      const tx = cx + c.dx;
+      const ty = cy + c.dy;
+      const x =
+        c.anchor === 'end'
+          ? tx - labelW
+          : c.anchor === 'middle'
+            ? tx - labelW / 2
+            : tx;
+      const y = ty - FONT_LINE_H + 2;
+      return { x, y, w: labelW, h: FONT_LINE_H };
+    };
+
+    const inBounds = (b: { x: number; y: number; w: number; h: number }): boolean =>
+      b.x >= PLOT_BOUNDS.x0 &&
+      b.x + b.w <= PLOT_BOUNDS.x1 &&
+      b.y >= PLOT_BOUNDS.y0 &&
+      b.y + b.h <= PLOT_BOUNDS.y1;
+
+    const collides = (b: { x: number; y: number; w: number; h: number }): boolean => {
+      // Overlap with another label
+      for (const pl of placements) {
+        if (
+          b.x < pl.box.x + pl.box.w &&
+          b.x + b.w > pl.box.x &&
+          b.y < pl.box.y + pl.box.h &&
+          b.y + b.h > pl.box.y
+        ) {
+          return true;
+        }
+      }
+      // Inside a peer dot's hit area (or its own)
+      for (const pl of placements) {
+        const cxDot = pl.cx;
+        const cyDot = pl.cy;
+        const r = pl.baseR + 4;
+        const closestX = Math.max(b.x, Math.min(cxDot, b.x + b.w));
+        const closestY = Math.max(b.y, Math.min(cyDot, b.y + b.h));
+        const dx = closestX - cxDot;
+        const dy = closestY - cyDot;
+        if (dx * dx + dy * dy < r * r) return true;
+      }
+      return false;
+    };
+
+    let chosen: Candidate | null = null;
+    let chosenBox: { x: number; y: number; w: number; h: number } | null = null;
+    for (const c of candidates) {
+      const box = boxFor(c);
+      if (!inBounds(box)) continue;
+      if (collides(box)) continue;
+      chosen = c;
+      chosenBox = box;
+      break;
+    }
+    // If every candidate failed, fall back to the default top-right
+    // even if it overlaps. Better to show the label than swallow it.
+    const fallback: Candidate = candidates[0]!;
+    const finalCandidate = chosen ?? fallback;
+    const finalBox = chosenBox ?? boxFor(fallback);
+
+    placements.push({
+      point: p,
+      cx,
+      cy,
+      baseR,
+      textX: cx + finalCandidate.dx,
+      textY: cy + finalCandidate.dy,
+      anchor: finalCandidate.anchor,
+      box: finalBox,
+    });
+  }
+  // Index by point identity so the render loop can pull placements in
+  // original order without re-sorting.
+  const placementByPoint = new Map(placements.map((pl) => [pl.point, pl]));
+
   // Per-model legend chips. Reads top-down with the chart so the
   // user can map name → colour at a glance for crowded plots.
   const legend = points;
@@ -332,21 +468,10 @@ export function QualitySpeedChart({ runs }: Props) {
               plots. Labels use paint-order so a stroke-width
               backdrop punches through gridlines for readability. */}
           {points.map((p) => {
-            const cx = xScale(p.avgTokPerSec);
-            const cy = yScale(p.passRate);
+            const pl = placementByPoint.get(p);
+            if (pl === undefined) return null;
             const isHover = hover === p;
-            const baseR = sizeFor(p.totalMs);
-            const r = isHover ? baseR + 4 : baseR;
-            const label = shortId(p.id);
-            // Flip the label when the dot is in the right ~25% so the
-            // text doesn't run off the plot. Same idea for top edge.
-            // Offset scales with the dot size so labels don't overlap
-            // larger bubbles.
-            const flipX = cx > PAD_L + PLOT_W * 0.72;
-            const flipY = cy < PAD_T + PLOT_H * 0.12;
-            const off = baseR + 6;
-            const labelX = flipX ? cx - off : cx + off;
-            const labelY = flipY ? cy + off + 12 : cy - off - 4;
+            const r = isHover ? pl.baseR + 4 : pl.baseR;
             return (
               <g
                 key={`pt-${p.id}-${p.source}`}
@@ -358,15 +483,15 @@ export function QualitySpeedChart({ runs }: Props) {
                 className="outline-none [&:focus-visible_circle]:stroke-accent"
               >
                 <circle
-                  cx={cx}
-                  cy={cy}
+                  cx={pl.cx}
+                  cy={pl.cy}
                   r={Math.max(r + 6, 16)}
                   fill="transparent"
                   className="cursor-crosshair"
                 />
                 <circle
-                  cx={cx}
-                  cy={cy}
+                  cx={pl.cx}
+                  cy={pl.cy}
                   r={r}
                   fill={p.color}
                   stroke="rgb(var(--bg-elevated))"
@@ -375,20 +500,21 @@ export function QualitySpeedChart({ runs }: Props) {
                   className="drop-shadow-sm"
                 />
                 <text
-                  x={labelX}
-                  y={labelY}
-                  textAnchor={flipX ? 'end' : 'start'}
-                  className="pointer-events-none fill-fg font-mono text-[11px] font-medium"
+                  x={pl.textX}
+                  y={pl.textY}
+                  textAnchor={pl.anchor}
+                  className="pointer-events-none font-mono text-[11px] font-medium"
                   style={{
+                    fill: p.color,
                     paintOrder: 'stroke',
                     stroke: 'rgb(var(--bg-elevated))',
                     strokeWidth: 4,
                     strokeLinejoin: 'round',
-                    opacity: isHover || hover === null ? 1 : 0.45,
+                    opacity: isHover || hover === null ? 1 : 0.5,
                     transition: 'opacity 150ms ease',
                   }}
                 >
-                  {label}
+                  {shortId(p.id)}
                 </text>
               </g>
             );
