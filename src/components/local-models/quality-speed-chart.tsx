@@ -262,11 +262,21 @@ export function QualitySpeedChart({ runs }: Props) {
     y1: PAD_T + PLOT_H + 2,
   };
 
+  // When the same model id appears more than once in the visible
+  // set, append the run's clock time to the dot/legend label so the
+  // user can tell duplicates apart. Single-run models stay clean.
+  const idCounts = new Map<string, number>();
+  for (const p of points) idCounts.set(p.id, (idCounts.get(p.id) ?? 0) + 1);
+  const labelFor = (p: Point): string => {
+    const base = shortId(p.id);
+    return (idCounts.get(p.id) ?? 0) > 1 ? `${base} · ${fmtClockShort(p.startedAt)}` : base;
+  };
+
   for (const p of orderedPoints) {
     const cx = xScale(p.avgTokPerSec);
     const cy = yScale(p.passRate);
     const baseR = sizeFor(p.totalMs);
-    const labelText = shortId(p.id);
+    const labelText = labelFor(p);
     const labelW = labelText.length * FONT_CHAR_W + 4;
     const off = baseR + 6;
     const offFar = baseR + 12;
@@ -397,14 +407,14 @@ export function QualitySpeedChart({ runs }: Props) {
                     ? 'border-accent text-fg'
                     : 'border-border text-fg-muted'
                 }`}
-                title={`${p.id} · ${SOURCE_LABELS[p.source] ?? p.source}`}
+                title={`${p.id} · ${SOURCE_LABELS[p.source] ?? p.source} · started ${new Date(p.startedAt).toLocaleString()}`}
               >
                 <span
                   aria-hidden
                   className="h-2 w-2 flex-shrink-0 rounded-full"
                   style={{ background: p.color }}
                 />
-                <span className="truncate">{shortId(p.id)}</span>
+                <span className="truncate">{labelFor(p)}</span>
               </span>
             ))}
           </div>
@@ -579,7 +589,7 @@ export function QualitySpeedChart({ runs }: Props) {
                     transition: 'opacity 150ms ease',
                   }}
                 >
-                  {shortId(p.id)}
+                  {labelFor(p)}
                 </text>
               </g>
             );
@@ -676,6 +686,9 @@ function Tooltip({ point, maxTokps }: { point: Point; maxTokps: number }) {
           </p>
           <p className="truncate font-mono text-[10px] text-fg-muted">
             {SOURCE_LABELS[point.source] ?? point.source} · {point.displayBaseUrl}
+          </p>
+          <p className="truncate font-mono text-[10px] text-fg-faint" title={new Date(point.startedAt).toLocaleString()}>
+            started {fmtClockShort(point.startedAt)}
           </p>
         </div>
         <span

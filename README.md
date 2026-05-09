@@ -41,26 +41,56 @@ are described in [CI / CD](#ci--cd) below.
 
 1. **Probes `127.0.0.1`** for any OpenAI-compatible LLM server — Ollama,
    LM Studio, vLLM, llama.cpp, and any custom host you add.
-2. **Runs a 48-case eval suite** against every model you select —
-   instruction-following, JSON output, code reasoning, mid- and
-   long-context retrieval, multi-step inference, refusal, arithmetic
-   (decimal / hex / binary / modular), character-level gotchas
-   (counting letters, palindromes, anagrams, reversal), classification
-   (sentiment, spam, enum, odd-one-out), date math, set operations,
-   prompt-injection resistance, native tool calling, and vision
-   (counting, OCR, spatial). Cases auto-skip on models that lack the
-   required capability.
+2. **Runs an 86-case eval suite** against every model you select.
+   Each case carries one or more **tags** so you can group cases by
+   capability and either filter the panel view or opt-in to running
+   only the matching subset. Coverage:
+
+   - Instruction-following &amp; constrained generation, JSON output
+     (flat / nested / array)
+   - Code: trace, debug (off-by-one), Big-O, SQL clauses, language
+     ID, one-line generation
+   - Math: word problems (rates, age, multi-step), algebra,
+     geometry, sequences, probability (coins, dice), arithmetic
+     (decimal · hex · binary · modular)
+   - Logic: knights &amp; knaves, classic gotchas, fallacies, family
+     relations, syllogisms, object tracking, pragmatic implicature
+   - Ciphers (Caesar · ROT13) and base64 decoding
+   - Commonsense (physics, time, social), science facts
+   - Classifiers: sentiment, spam, enum, topic, toxicity, question
+     vs statement, language identification
+   - Multilingual translation, retrieval &amp; passage
+     comprehension, multi-step inference, refusal,
+     prompt-injection resistance
+   - Character-level gotchas (counting letters, palindromes,
+     anagrams, reversal), strict multi-line / single-line / case
+     formatting
+   - Native tool calling, vision (counting · OCR · spatial)
+
+   Cases auto-skip on models that lack the required capability
+   (`tool_use` / `vision`).
 
    Typical wall-clock for a single model on a modern laptop is
-   **~5–8 minutes** (closer to 3 min for a fast 7B, 10–15 min for a
-   reasoning model with high effort). The runner is sequential per
-   model so multi-model comparisons scale linearly.
+   **~10–15 minutes** for the full 86-case run (closer to 5 min
+   for a fast 7B, 25+ min for a reasoning model on high effort).
+   The runner is sequential per model so multi-model comparisons
+   scale linearly. **Use the category filter** to run a single
+   capability in seconds when you're iterating.
 3. **Streams results live** as each case finishes, with pass-rate, mean
    tok/s, p95 latency, and total wall-clock per model. When you pick
    two or more models, an interactive **Quality × Speed scatter**
    surfaces the Pareto frontier — bubble size encodes total bench
-   time, dot colour is unique per model, hover for a detail card.
-4. **Exports everything** — interactive HTML (collapsible, printable,
+   time, dot colour is unique per **run** (so re-running the same
+   model with different params gets a distinct point), hover for a
+   detail card. A run-filter dropdown above the chart lets you
+   include/exclude individual runs without losing them from history.
+4. **Persists run history** in IndexedDB. Each Start appends new
+   results rather than wiping the previous comparison — you can
+   compare three models that each need a model unload/reload between
+   them, refresh the page, and everything is still there. The
+   **History dialog** lets you browse, bulk-delete, or wipe stored
+   runs. *Clear last run* only drops the most recent session.
+5. **Exports everything** — interactive HTML (collapsible, printable,
    single self-contained file), Markdown, JSON, or print-to-PDF.
 
 There is no backend. The browser talks to `127.0.0.1` directly. Your
@@ -162,12 +192,50 @@ Each case has:
 - a prompt (and optional vision image, base64-encoded inline),
 - an expected-shape evaluator (substring match, regex, JSON schema, or
   expected tool-call name + args),
+- one or more **tags** that group it into capability categories (see
+  below),
 - a capability gate (`tool_use`, `vision`) that lets it auto-skip on
   unsupported models so the pass-rate denominator stays honest.
 
 Scoring is computed in the browser by
 [`evaluator-direct.ts`](src/components/local-models/evaluator-direct.ts) — no
-LLM-as-judge, no network round-trip, deterministic.
+LLM-as-judge, no network round-trip, deterministic. The `regex`
+evaluator trims trailing whitespace before matching so a stray newline
+from a chat model doesn't defeat `$` anchors.
+
+Inspirations: the suite borrows ideas from **TruthfulQA** (common
+misconceptions), **HumanEval** (one-line code generation), **GSM8K**
+(multi-step word problems), **BBH** (object tracking, syllogisms),
+**IFEval** (constrained generation), and **DROP** (passage
+comprehension), adapted to a strict-output single-turn format that
+scores deterministically without an LLM judge.
+
+### Tags &amp; categories
+
+Every case is labeled with a small set of tags — the running set
+includes `instruction-following`, `structured-output`, `code`,
+`reasoning`, `math`, `arithmetic`, `algebra`, `geometry`, `sequence`,
+`probability`, `logic`, `commonsense`, `cipher`, `encoding`,
+`character-level`, `tool-use`, `native`, `routing`, `safety-shape`,
+`gotcha`, `classification`, `multilingual`, `retrieval`,
+`comprehension`, `mid-context`, `long-context`, `tracking`,
+`world-knowledge`, `science`, `fact`, `sorting`, `vision`, `counting`,
+`ocr`, `spatial`, `fast`, and a few others.
+
+The Eval-cases panel shows them as a **chip filter row**:
+
+- Click any chip to filter the panel view to that tag (multi-select
+  unions — a case is shown if it carries at least one selected tag).
+- Each chip displays its case count, so you can see at a glance how
+  many cases a category contains.
+- Per-row tags are clickable too — toggle the filter directly from a
+  case row without scrolling to the chip bar.
+- An **Apply category filter to run** checkbox lets you opt in to
+  running only the filtered subset (otherwise the filter is
+  view-only and the runner still uses every enabled case). The
+  `Run rating` button label and "X of N cases will run" header
+  update accordingly. Cases are deduplicated when they match
+  multiple selected tags.
 
 ## Generation parameters
 
@@ -202,7 +270,7 @@ plus engine identity:
 | **Y axis** | Pass rate (0–100%) — higher = better quality |
 | **X axis** | Mean tokens / second — right = faster throughput |
 | **Bubble size** | Total bench wall-clock time — smaller = faster overall |
-| **Bubble colour** | Deterministic per `source::id::port` (same model = same shade across reruns) |
+| **Bubble colour** | Deterministic per `runId` (each individual run gets its own colour, so re-running the same model with different params is visually distinct) — 24-entry palette |
 | **Dashed accent line** | Pareto frontier — non-dominated set; rational picks for any quality / speed trade-off |
 | **Soft coloured ring** | Marks frontier members |
 
@@ -221,9 +289,49 @@ Polish:
 - **Size legend** below the chart shows two reference dots scaled to
   the actual fastest / slowest run-times, so the encoding is grounded
   in real numbers instead of a blanket "smaller = faster" claim.
-- Renders nothing for a single model (no comparison to make).
+- **Filter runs** dropdown in the chart header — checkbox per run so
+  you can include/exclude individual entries without removing them
+  from history. Useful when comparing the same model across many
+  parameter settings.
+- Renders nothing for a single run (no comparison to make).
 - Pure inline SVG, no chart library — ~+8 KB to the bundle vs. ~+200
   KB if we'd pulled in recharts.
+
+## Run history
+
+Every finished bench is persisted to **IndexedDB** under the database
+`openbench-local`, keyed by `runId` and grouped by `sessionId` (one
+session per Start click — a batch of three models started together
+becomes one session of three runs).
+
+What this means in practice:
+
+- **Append on Start, never replace.** Pressing `Run rating` adds new
+  results to the existing comparison instead of clearing it. You can
+  bench three models that each need an unload/reload of the previous
+  one (so a "compare batch" isn't possible) and still see all three
+  side-by-side at the end.
+- **Survives reloads.** Refreshing the page hydrates everything from
+  IndexedDB — the comparison table, the chart, and the history.
+- **Per-run parameters captured.** Each stored run remembers the
+  effective sampling parameters that produced it (temperature,
+  reasoning effort, top_p, seed, …). Re-running the same model with a
+  different temperature produces a *new* history entry with its own
+  params — useful for "is this regression from the model or from
+  the params?" investigations.
+- **History dialog** (top-right `History` button) shows every
+  stored run grouped by session. Per-run and per-session delete,
+  checkbox bulk-select, and a `Delete all` (with confirm) for a
+  full wipe. Image data URLs are stripped before persistence to
+  stay clear of the IDB quota; output, reasoning trace, evaluator
+  detail, and timings are all preserved.
+- **`Clear last run`** in the page header only pops the most recent
+  session — older runs stay both visible and persisted. The
+  *History* dialog is for everything else.
+
+Image data URLs are stripped before persistence to keep storage
+size bounded; the rebuildable case definitions still carry them
+for re-runs.
 
 ## Editable eval suite
 
