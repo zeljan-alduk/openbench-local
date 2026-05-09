@@ -3,7 +3,7 @@
  *
  * Mirrors the subset of `@aldo-ai/eval` that the inlined suite uses:
  *   - contains / not_contains: substring match
- *   - regex:                   `new RegExp(value).test(output)`
+ *   - regex:                   `new RegExp(value).test(output.trim())`
  *   - exact:                   `output.trim() === value`
  *   - json_schema:             a hand-rolled subset (type / required /
  *                              properties / enum) — same dialect the
@@ -52,7 +52,12 @@ export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): 
     case 'regex': {
       try {
         const re = new RegExp(expect.value);
-        return binary(re.test(row.content));
+        // Trim before matching so that a stray trailing newline (common
+        // with chat models — Qwen especially likes to append `\n`) doesn't
+        // defeat `$` anchors. Mirrors the `exact` evaluator's behavior and
+        // matches the spirit of the suite, where some patterns already
+        // pad with `\s*` and others don't.
+        return binary(re.test(row.content.trim()));
       } catch (e) {
         return {
           passed: false,
