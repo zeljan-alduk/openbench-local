@@ -421,12 +421,21 @@ export function QualitySpeedChart({ runs }: Props) {
         </div>
       </header>
 
-      <div className="relative px-3 py-4">
+      <div
+        className="relative px-3 py-4"
+        // Fallback: if a fast mouse movement skips a dot's mouseLeave
+        // (occasional Safari/Firefox quirk with SVG <g> hit-testing),
+        // the tooltip can stick. Clearing on the wrapper's mouseLeave
+        // guarantees it disappears the moment the cursor leaves the
+        // chart area entirely.
+        onMouseLeave={() => setHover(null)}
+      >
         <svg
           viewBox={`0 0 ${W} ${H}`}
           className="h-auto w-full select-none"
           role="img"
           aria-label="Scatter plot of pass-rate versus tokens-per-second per model"
+          onMouseLeave={() => setHover(null)}
         >
           {/* Plot frame */}
           <rect
