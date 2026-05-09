@@ -26,9 +26,11 @@ interface Props {
 }
 
 interface Point {
+  readonly runId: string;
   readonly id: string;
   readonly source: string;
   readonly displayBaseUrl: string;
+  readonly startedAt: number;
   readonly passed: number;
   readonly total: number;
   readonly passRate: number;
@@ -91,22 +93,36 @@ const PLOT_W = W - PAD_L - PAD_R;
 const PLOT_H = H - PAD_T - PAD_B;
 
 export function QualitySpeedChart({ runs }: Props) {
-  const points = useMemo<readonly Point[]>(() => {
-    return runs
-      .filter(
+  // Runs the user has hidden via the filter dropdown. Defaults to
+  // empty (everything included). Excluded entries are dropped before
+  // the points are computed so the chart math, frontier, and label
+  // placement all work on the visible subset only.
+  const [excluded, setExcluded] = useState<ReadonlySet<string>>(new Set());
+
+  const allCandidates = useMemo(
+    () =>
+      runs.filter(
         (r): r is ModelRunState & { summary: NonNullable<ModelRunState['summary']> } =>
           r.summary !== null &&
           r.summary.avgTokPerSec !== null &&
           Number.isFinite(r.summary.avgTokPerSec) &&
           r.summary.total > 0,
-      )
+      ),
+    [runs],
+  );
+
+  const points = useMemo<readonly Point[]>(() => {
+    return allCandidates
+      .filter((r) => !excluded.has(r.runId))
       .map((r): Point => {
         const totalMs = r.rows.reduce((sum, row) => sum + row.totalMs, 0);
         const tokps = r.summary.avgTokPerSec ?? 0;
         return {
+          runId: r.runId,
           id: r.model.id,
           source: r.model.source,
           displayBaseUrl: r.model.displayBaseUrl,
+          startedAt: r.startedAt,
           passed: r.summary.passed,
           total: r.summary.total,
           passRate: r.summary.passRate,
@@ -116,7 +132,7 @@ export function QualitySpeedChart({ runs }: Props) {
           color: colourFor(`${r.model.source}::${r.model.id}::${r.model.port}`),
         };
       });
-  }, [runs]);
+  }, [allCandidates, excluded]);
 
   const [hover, setHover] = useState<Point | null>(null);
 
@@ -141,7 +157,36 @@ export function QualitySpeedChart({ runs }: Props) {
     return [...front].sort((a, b) => a.avgTokPerSec - b.avgTokPerSec);
   }, [points]);
 
-  if (points.length < 2) return null;
+  // Bail when there's nothing useful to show even unfiltered. When
+  // the user has merely filtered the set down below 2, render a
+  // minimal frame so the filter UI stays reachable.
+  if (allCandidates.length < 2) return null;
+  const filteredOut = allCandidates.length - points.length;
+
+  if (points.length < 2) {
+    return (
+      <section className="rounded-2xl border border-border bg-bg-elevated shadow-sm">
+        <header className="flex flex-wrap items-baseline justify-between gap-3 border-b border-border px-5 py-4">
+          <div>
+            <p className="text-[11px] font-semibold uppercase tracking-[0.18em] text-accent">
+              Quality × speed
+            </p>
+            <h2 className="mt-1 text-base font-semibold text-fg">
+              {filteredOut} run{filteredOut === 1 ? '' : 's'} hidden
+            </h2>
+          </div>
+          <RunFilter
+            candidates={allCandidates}
+            excluded={excluded}
+            onExcludedChange={setExcluded}
+          />
+        </header>
+        <div className="px-5 py-8 text-center text-sm text-fg-muted">
+          Pick at least two runs in the filter to plot the Pareto frontier.
+        </div>
+      </section>
+    );
+  }
 
   // Y axis ticks at 25% intervals, X axis ticks at 5 evenly-spaced
   // marks. Gridlines piggyback off the same values.
@@ -183,10 +228,10 @@ export function QualitySpeedChart({ runs }: Props) {
   // Priority: Pareto-frontier dots first (they're the headline result),
   // then everyone else by pass-rate desc so high-quality models get
   // unobstructed labels even on crowded charts.
-  const frontierIds = new Set(frontier.map((p) => p.id + p.source));
+  const frontierIds = new Set(frontier.map((p) => p.runId));
   const orderedPoints = [...points].sort((a, b) => {
-    const aFront = frontierIds.has(a.id + a.source) ? 1 : 0;
-    const bFront = frontierIds.has(b.id + b.source) ? 1 : 0;
+    const aFront = frontierIds.has(a.runId) ? 1 : 0;
+    const bFront = frontierIds.has(b.runId) ? 1 : 0;
     if (aFront !== bFront) return bFront - aFront;
     return b.passRate - a.passRate;
   });
@@ -322,27 +367,34 @@ export function QualitySpeedChart({ runs }: Props) {
             axes by anyone else, so they're the rational choices for any quality / speed trade-off.
           </p>
         </div>
-        <div className="flex max-w-md flex-wrap items-center justify-end gap-1.5">
-          {legend.map((p) => (
-            <span
-              key={`legend-${p.id}-${p.source}`}
-              onMouseEnter={() => setHover(p)}
-              onMouseLeave={() => setHover((cur) => (cur === p ? null : cur))}
-              className={`inline-flex max-w-[16rem] cursor-default items-center gap-1.5 rounded-full border bg-bg px-2 py-0.5 font-mono text-[11px] transition-colors ${
-                hover === p
-                  ? 'border-accent text-fg'
-                  : 'border-border text-fg-muted'
-              }`}
-              title={`${p.id} · ${SOURCE_LABELS[p.source] ?? p.source}`}
-            >
+        <div className="flex max-w-md flex-col items-end gap-2">
+          <RunFilter
+            candidates={allCandidates}
+            excluded={excluded}
+            onExcludedChange={setExcluded}
+          />
+          <div className="flex flex-wrap items-center justify-end gap-1.5">
+            {legend.map((p) => (
               <span
-                aria-hidden
-                className="h-2 w-2 flex-shrink-0 rounded-full"
-                style={{ background: p.color }}
-              />
-              <span className="truncate">{shortId(p.id)}</span>
-            </span>
-          ))}
+                key={`legend-${p.runId}`}
+                onMouseEnter={() => setHover(p)}
+                onMouseLeave={() => setHover((cur) => (cur === p ? null : cur))}
+                className={`inline-flex max-w-[16rem] cursor-default items-center gap-1.5 rounded-full border bg-bg px-2 py-0.5 font-mono text-[11px] transition-colors ${
+                  hover === p
+                    ? 'border-accent text-fg'
+                    : 'border-border text-fg-muted'
+                }`}
+                title={`${p.id} · ${SOURCE_LABELS[p.source] ?? p.source}`}
+              >
+                <span
+                  aria-hidden
+                  className="h-2 w-2 flex-shrink-0 rounded-full"
+                  style={{ background: p.color }}
+                />
+                <span className="truncate">{shortId(p.id)}</span>
+              </span>
+            ))}
+          </div>
         </div>
       </header>
 
@@ -451,7 +503,7 @@ export function QualitySpeedChart({ runs }: Props) {
               stays consistent at any size. */}
           {frontier.map((p) => (
             <circle
-              key={`ring-${p.id}-${p.source}`}
+              key={`ring-${p.runId}`}
               cx={xScale(p.avgTokPerSec)}
               cy={yScale(p.passRate)}
               r={sizeFor(p.totalMs) + 6}
@@ -474,7 +526,7 @@ export function QualitySpeedChart({ runs }: Props) {
             const r = isHover ? pl.baseR + 4 : pl.baseR;
             return (
               <g
-                key={`pt-${p.id}-${p.source}`}
+                key={`pt-${p.runId}`}
                 onMouseEnter={() => setHover(p)}
                 onMouseLeave={() => setHover((cur) => (cur === p ? null : cur))}
                 onFocus={() => setHover(p)}
@@ -568,7 +620,7 @@ export function QualitySpeedChart({ runs }: Props) {
         </thead>
         <tbody>
           {points.map((p) => (
-            <tr key={`a11y-${p.id}-${p.source}`}>
+            <tr key={`a11y-${p.runId}`}>
               <td>{p.id}</td>
               <td>{SOURCE_LABELS[p.source] ?? p.source}</td>
               <td>{(p.passRate * 100).toFixed(1)}%</td>
@@ -643,4 +695,121 @@ function Tooltip({ point, maxTokps }: { point: Point; maxTokps: number }) {
       </dl>
     </div>
   );
+}
+
+/**
+ * Filter dropdown shown in the chart header. Lets the user toggle
+ * runs in/out of the plot — useful when the same model appears more
+ * than once (re-run with different parameters) and the chart gets
+ * visually noisy. Default state is "everything included"; the
+ * dropdown lists each candidate with a checkbox and a small
+ * timestamp so duplicates are distinguishable.
+ */
+function RunFilter({
+  candidates,
+  excluded,
+  onExcludedChange,
+}: {
+  candidates: readonly (ModelRunState & { summary: NonNullable<ModelRunState['summary']> })[];
+  excluded: ReadonlySet<string>;
+  onExcludedChange: (next: ReadonlySet<string>) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const includedCount = candidates.length - excluded.size;
+  const toggle = (runId: string) => {
+    const next = new Set(excluded);
+    if (next.has(runId)) next.delete(runId);
+    else next.add(runId);
+    onExcludedChange(next);
+  };
+  const allOn = excluded.size === 0;
+  const setAll = (on: boolean) => {
+    onExcludedChange(on ? new Set() : new Set(candidates.map((c) => c.runId)));
+  };
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((v) => !v)}
+        className={[
+          'inline-flex items-center gap-1.5 rounded-lg border px-2.5 py-1 text-[11px] font-medium transition-colors',
+          excluded.size === 0
+            ? 'border-border bg-bg text-fg-muted hover:border-accent hover:text-accent'
+            : 'border-accent/60 bg-accent/10 text-accent',
+        ].join(' ')}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title="Pick which runs are plotted"
+      >
+        <span aria-hidden>⏷</span>
+        Filter runs
+        <span className="font-mono tabular-nums">
+          {includedCount}/{candidates.length}
+        </span>
+      </button>
+      {open ? (
+        <>
+          <div
+            className="fixed inset-0 z-30"
+            aria-hidden
+            onClick={() => setOpen(false)}
+            role="button"
+            tabIndex={-1}
+          />
+          <div className="absolute right-0 z-40 mt-1 w-[min(360px,90vw)] rounded-lg border border-border bg-bg-elevated p-3 shadow-xl">
+            <div className="flex items-center justify-between border-b border-border pb-2">
+              <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+                Plotted runs
+              </p>
+              <button
+                type="button"
+                onClick={() => setAll(!allOn)}
+                className="rounded border border-border bg-bg px-2 py-0.5 font-mono text-[10px] text-fg hover:border-accent hover:text-accent"
+              >
+                {allOn ? 'Hide all' : 'Show all'}
+              </button>
+            </div>
+            <div className="mt-2 max-h-72 overflow-y-auto">
+              {candidates.map((c) => {
+                const checked = !excluded.has(c.runId);
+                return (
+                  <label
+                    key={c.runId}
+                    className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 hover:bg-bg-subtle"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(c.runId)}
+                      className="h-3.5 w-3.5 accent-accent"
+                    />
+                    <span
+                      aria-hidden
+                      className="h-2 w-2 flex-shrink-0 rounded-full"
+                      style={{
+                        background: colourFor(`${c.model.source}::${c.model.id}::${c.model.port}`),
+                      }}
+                    />
+                    <span className="flex-1 truncate font-mono text-[11px] text-fg" title={c.model.id}>
+                      {shortId(c.model.id)}
+                    </span>
+                    <span className="font-mono text-[10px] text-fg-faint">
+                      {fmtClockShort(c.startedAt)}
+                    </span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+function fmtClockShort(epoch: number): string {
+  const d = new Date(epoch);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
 }

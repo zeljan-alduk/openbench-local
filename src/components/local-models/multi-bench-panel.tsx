@@ -17,8 +17,8 @@
  * iterates the selection list.
  */
 
-import { useState } from 'react';
-import type { BenchCaseRow, BenchSummary } from './bench-direct';
+import { useMemo, useState } from 'react';
+import type { BenchCaseRow, BenchSummary, RunConfig } from './bench-direct';
 import { BenchTable } from './bench-table';
 import type { DiscoveredLocalModel } from './discovery-direct';
 import { QualitySpeedChart } from './quality-speed-chart';
@@ -47,6 +47,20 @@ export interface ModelRunState {
   readonly inFlight: InFlightCase | null;
   /** Warm-up ping result, recorded when the runner starts the model. */
   readonly warmUp: { ok: boolean; ms: number; error?: string } | null;
+  /**
+   * Stable identity for this single model-run within a session. New
+   * runs append to the in-memory `runs` array rather than replacing
+   * it, so each entry needs its own id for delete and chart-filter.
+   */
+  readonly runId: string;
+  /** Groups all model runs that started together (one Start click). */
+  readonly sessionId: string;
+  /** epoch ms — when this model's run dispatched (post-warm-up). */
+  readonly startedAt: number;
+  /** epoch ms — null while running, set on done/stopped/error. */
+  readonly finishedAt: number | null;
+  /** Effective generation parameters that produced this run. */
+  readonly runConfig: RunConfig;
 }
 
 interface Props {
@@ -78,9 +92,9 @@ export function MultiBenchPanel({ runs, suiteCases, onRetryCase }: Props) {
       ) : null}
       {showCompare && view === 'by-case' ? <ByCaseGrid runs={runs} /> : null}
       {(view === 'by-model' || !showCompare) &&
-        runs.map((r, idx) => (
+        runs.map((r) => (
           <ModelSection
-            key={`${r.model.source}-${r.model.id}-${r.model.port}-${idx}`}
+            key={r.runId}
             run={r}
             suiteCases={suiteCases}
             {...(onRetryCase !== undefined ? { onRetryCase } : {})}
@@ -153,9 +167,9 @@ function ByCaseGrid({ runs }: { runs: readonly ModelRunState[] }) {
               <th className="sticky left-0 z-10 bg-bg-subtle/60 px-3 py-2 text-left font-medium">
                 Case
               </th>
-              {runs.map((r, i) => (
+              {runs.map((r) => (
                 <th
-                  key={`hdr-${r.model.source}-${r.model.id}-${r.model.port}-${i}`}
+                  key={`hdr-${r.runId}`}
                   className="px-3 py-2 text-left font-medium"
                 >
                   <span
@@ -177,11 +191,11 @@ function ByCaseGrid({ runs }: { runs: readonly ModelRunState[] }) {
                 <td className="sticky left-0 z-10 bg-bg-elevated px-3 py-2 align-top font-mono text-[12px] text-fg">
                   {cid}
                 </td>
-                {runs.map((r, i) => {
+                {runs.map((r) => {
                   const row = r.rows.find((x) => x.id === cid);
                   return (
                     <td
-                      key={`cell-${r.model.source}-${r.model.id}-${r.model.port}-${i}-${cid}`}
+                      key={`cell-${r.runId}-${cid}`}
                       className="px-3 py-2 align-top"
                     >
                       <CompareCell row={row} />
@@ -253,8 +267,8 @@ function ComparisonStrip({ runs }: { runs: readonly ModelRunState[] }) {
           </tr>
         </thead>
         <tbody>
-          {runs.map((r, i) => (
-            <CompareRow key={`${r.model.source}-${r.model.id}-${r.model.port}-${i}`} run={r} />
+          {runs.map((r) => (
+            <CompareRow key={r.runId} run={r} />
           ))}
         </tbody>
       </table>
@@ -282,6 +296,7 @@ function CompareRow({ run }: { run: ModelRunState }) {
             {run.model.id}
           </span>
           <span className="font-mono text-[10px] text-fg-muted">{run.model.source}</span>
+          <RunIdentityLabel startedAt={run.startedAt} config={run.runConfig} />
         </div>
       </td>
       <td className="px-3 py-2 align-top">
@@ -324,6 +339,7 @@ function ModelSection({
           <p className="mt-0.5 truncate font-mono text-[11px] text-fg-muted">
             {run.model.source} · {run.model.displayBaseUrl}
           </p>
+          <RunIdentityLabel startedAt={run.startedAt} config={run.runConfig} />
           {run.warmUp !== null ? (
             <p
               className={`mt-1 font-mono text-[10px] ${
@@ -357,6 +373,54 @@ function ModelSection({
       </div>
     </section>
   );
+}
+
+/**
+ * Compact "when + how" label shown next to the model identity in
+ * the comparison strip and per-model section header. Useful when the
+ * same model appears in `runs` more than once (re-run with different
+ * params) — gives the eye an anchor without expanding the row.
+ */
+function RunIdentityLabel({
+  startedAt,
+  config,
+}: {
+  startedAt: number;
+  config: RunConfig;
+}) {
+  const time = useMemo(() => fmtClockShort(startedAt), [startedAt]);
+  const params = useMemo(() => formatKeyParams(config), [config]);
+  if (params.length === 0) {
+    return (
+      <span className="font-mono text-[10px] text-fg-faint" title={new Date(startedAt).toLocaleString()}>
+        {time}
+      </span>
+    );
+  }
+  return (
+    <span
+      className="font-mono text-[10px] text-fg-faint"
+      title={new Date(startedAt).toLocaleString()}
+    >
+      {time} · {params}
+    </span>
+  );
+}
+
+function fmtClockShort(epoch: number): string {
+  const d = new Date(epoch);
+  const hh = String(d.getHours()).padStart(2, '0');
+  const mm = String(d.getMinutes()).padStart(2, '0');
+  return `${hh}:${mm}`;
+}
+
+function formatKeyParams(c: RunConfig): string {
+  const bits: string[] = [];
+  if (c.temperature !== undefined) bits.push(`temp=${c.temperature}`);
+  if (c.reasoningEffort !== undefined) bits.push(`reason=${c.reasoningEffort}`);
+  if (c.topP !== undefined) bits.push(`top_p=${c.topP}`);
+  if (c.repeatCount !== undefined && c.repeatCount > 1) bits.push(`×${c.repeatCount}`);
+  return bits.join(' · ');
 }
 
 function PhaseChip({ phase }: { phase: RunPhase }) {

@@ -50,6 +50,16 @@ import {
 import { EngineSetupTips } from './engine-setup-tips';
 import { ModelConfigModal } from './model-config-modal';
 import { ModelGrid } from './model-grid';
+import {
+  clearAll as clearAllRuns,
+  deleteSession as deleteSessionFromHistory,
+  getAllRuns,
+  migrateLegacyLastRun,
+  putRun,
+  serialiseSummary,
+  storedToRunState,
+} from './history-store';
+import { HistoryDialog } from './history-dialog';
 import { type ModelRunState, MultiBenchPanel, type RunPhase } from './multi-bench-panel';
 import { mergeRunConfig, usePerModelConfig } from './per-model-config';
 import { ProbeStatus } from './probe-status';
@@ -96,40 +106,44 @@ export function LocalModelsShell() {
   // first run.
   const [runCompletedAt, setRunCompletedAt] = useState<number | null>(null);
 
-  // Last-run persistence: when a campaign finishes (done OR error)
-  // we stash a slim snapshot to localStorage so a refresh restores
-  // the table instead of starting from scratch. Image data URLs are
-  // stripped before saving — they can be megabytes each and exhaust
-  // the origin quota. Stats / output / errors / summary all persist.
-  const HYDRATED_FROM_STORAGE = 'openbench-local:last-run';
-  // Hydrate once on mount.
+  // History is persisted to IndexedDB. Each model run is stored as
+  // its own record (keyed by runId, grouped by sessionId). On mount
+  // we migrate the old localStorage snapshot once, then hydrate the
+  // visible `runs` from IDB so a refresh keeps every accumulated run
+  // — not just the latest. The History dialog (separate UI) lets the
+  // user prune older runs; "Clear results" only pops the latest
+  // session.
+  const [historyOpen, setHistoryOpen] = useState(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional one-shot
   useEffect(() => {
-    try {
-      const raw = window.localStorage.getItem(HYDRATED_FROM_STORAGE);
-      if (raw === null) return;
-      const parsed = JSON.parse(raw) as {
-        savedAt: number;
-        runs: ModelRunState[];
-        runCompletedAt: number | null;
-        elapsedMs: number;
-      };
-      if (!Array.isArray(parsed.runs) || parsed.runs.length === 0) return;
-      // Drop any rows that came back with phase 'queued' / 'running'
-      // — those are stale state from a refresh mid-run; we only want
-      // a finished snapshot.
-      const cleaned = parsed.runs.map((r) => ({
-        ...r,
-        inFlight: null,
-        phase: r.phase === 'queued' || r.phase === 'running' ? ('stopped' as RunPhase) : r.phase,
-      }));
-      setRuns(cleaned);
-      setRunCompletedAt(parsed.runCompletedAt ?? parsed.savedAt);
-      setElapsedMs(parsed.elapsedMs ?? 0);
+    let cancelled = false;
+    void (async () => {
+      await migrateLegacyLastRun();
+      const stored = await getAllRuns();
+      if (cancelled || stored.length === 0) return;
+      const hydrated = stored
+        .slice()
+        .sort((a, b) => a.startedAt - b.startedAt)
+        .map((s) => {
+          const r = storedToRunState(s);
+          // A finished snapshot may carry phase 'running'/'queued' if the
+          // page died mid-run before we wrote the final state. Treat
+          // those as stopped on hydrate.
+          const safePhase: RunPhase =
+            r.phase === 'queued' || r.phase === 'running' ? 'stopped' : r.phase;
+          return { ...r, phase: safePhase };
+        });
+      setRuns(hydrated);
+      const lastFinished = hydrated.reduce<number | null>(
+        (acc, r) => (r.finishedAt !== null && (acc === null || r.finishedAt > acc) ? r.finishedAt : acc),
+        null,
+      );
+      setRunCompletedAt(lastFinished);
       setPhase('done');
-    } catch {
-      /* corrupt blob — ignore and start fresh */
-    }
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   const startScan = useCallback(async (hostsForScan: readonly string[]) => {
@@ -191,52 +205,95 @@ export function LocalModelsShell() {
     const ac = new AbortController();
     globalAbortRef.current = ac;
 
-    // Initialise per-model run state up-front so the comparison strip
-    // shows every queued model immediately, not as cases stream in.
-    const initial: ModelRunState[] = selectedList.map((m, idx) => ({
-      model: m,
+    // One sessionId per Start click; each model gets its own runId.
+    const sessionId = newId();
+    const sessionStartedAt = Date.now();
+    // Snapshot the effective run-config for every selected model NOW,
+    // so re-runs at different settings each carry their own params in
+    // history (not the latest UI state).
+    const sessionEntries = selectedList.map((m) => {
+      const effective = mergeRunConfig(
+        runConfigEnabled ? runConfig : {},
+        getPerModel(modelKey(m)),
+      );
+      return { model: m, runId: newId(), runConfig: effective };
+    });
+
+    // Append (not replace) — older runs stay visible above the new
+    // ones. Index of the first newly-appended entry is `appendBase`;
+    // we use it inside the loop to address the right slot.
+    const appendBase = runs.length;
+    const appendedInitial: ModelRunState[] = sessionEntries.map((e, idx) => ({
+      model: e.model,
       phase: idx === 0 ? 'running' : 'queued',
       rows: [],
       summary: null,
       error: null,
       inFlight: null,
       warmUp: null,
+      runId: e.runId,
+      sessionId,
+      startedAt: sessionStartedAt,
+      finishedAt: null,
+      runConfig: e.runConfig,
     }));
-    setRuns(initial);
+    setRuns((prev) => [...prev, ...appendedInitial]);
     setRunStartedAt(performance.now());
 
+    const persistSlot = (slotIndex: number) => {
+      // Pull the live snapshot via a functional setRuns to avoid
+      // closure staleness, then write it to IDB.
+      setRuns((prev) => {
+        const r = prev[slotIndex];
+        if (r === undefined) return prev;
+        if (r.phase === 'queued' || r.phase === 'running') return prev;
+        void putRun({
+          runId: r.runId,
+          sessionId: r.sessionId,
+          startedAt: r.startedAt,
+          finishedAt: r.finishedAt ?? Date.now(),
+          model: r.model,
+          phase: r.phase,
+          rows: r.rows,
+          summary: serialiseSummary(r.summary),
+          error: r.error,
+          warmUp: r.warmUp,
+          runConfig: r.runConfig,
+        });
+        return prev;
+      });
+    };
+
     try {
-      for (let mi = 0; mi < selectedList.length; mi++) {
+      for (let si = 0; si < sessionEntries.length; si++) {
         if (ac.signal.aborted) break;
-        const m = selectedList[mi];
-        if (m === undefined) continue;
-        if (mi > 0) {
+        const entry = sessionEntries[si];
+        if (entry === undefined) continue;
+        const m = entry.model;
+        const slot = appendBase + si;
+        if (si > 0) {
           setRuns((prev) =>
-            prev.map((r, i) => (i === mi ? { ...r, phase: 'running' as RunPhase } : r)),
+            prev.map((r, i) => (i === slot ? { ...r, phase: 'running' as RunPhase } : r)),
           );
         }
         const accumulated: BenchCaseRow[] = [];
         try {
           const caps = inferCapabilities(m.id);
-          const effectiveRunConfig = mergeRunConfig(
-            runConfigEnabled ? runConfig : {},
-            getPerModel(modelKey(m)),
-          );
           const res = await runBenchDirect({
             suite: effectiveSuite,
             modelId: m.id,
             chatBaseUrl: m.chatBaseUrl,
             signal: ac.signal,
             modelCapabilities: { toolUse: caps.toolUse, vision: caps.vision },
-            runConfig: effectiveRunConfig,
+            runConfig: entry.runConfig,
             onWarmUp: (warmUp) => {
-              setRuns((prev) => prev.map((r, i) => (i === mi ? { ...r, warmUp } : r)));
+              setRuns((prev) => prev.map((r, i) => (i === slot ? { ...r, warmUp } : r)));
             },
             onCaseStart: (caseId, skip) => {
               caseSkipRef.current = skip;
               setRuns((prev) =>
                 prev.map((r, i) =>
-                  i === mi
+                  i === slot
                     ? {
                         ...r,
                         inFlight: {
@@ -253,7 +310,7 @@ export function LocalModelsShell() {
             onCaseProgress: (caseId, partial) => {
               setRuns((prev) =>
                 prev.map((r, i) => {
-                  if (i !== mi || r.inFlight === null || r.inFlight.caseId !== caseId) return r;
+                  if (i !== slot || r.inFlight === null || r.inFlight.caseId !== caseId) return r;
                   return {
                     ...r,
                     inFlight: {
@@ -271,46 +328,63 @@ export function LocalModelsShell() {
               const summary = summariseWithSuite(snapshot, effectiveSuite);
               setRuns((prev) =>
                 prev.map((r, i) =>
-                  i === mi ? { ...r, rows: snapshot, summary, inFlight: null } : r,
+                  i === slot ? { ...r, rows: snapshot, summary, inFlight: null } : r,
                 ),
               );
             },
           });
-          // Decide how this model's run terminated. If the global abort
-          // fired during this model, we mark it stopped; otherwise it
-          // ran to completion (some cases may have been skipped — those
-          // are still a "done" outcome from the campaign's perspective).
           const finalPhase: RunPhase = ac.signal.aborted ? 'stopped' : 'done';
           setRuns((prev) =>
             prev.map((r, i) =>
-              i === mi ? { ...r, phase: finalPhase, summary: res.summary, inFlight: null } : r,
+              i === slot
+                ? {
+                    ...r,
+                    phase: finalPhase,
+                    summary: res.summary,
+                    inFlight: null,
+                    finishedAt: Date.now(),
+                  }
+                : r,
             ),
           );
+          persistSlot(slot);
         } catch (e) {
           const msg = e instanceof Error ? e.message : String(e);
           setRuns((prev) =>
             prev.map((r, i) =>
-              i === mi ? { ...r, phase: 'error' as RunPhase, error: msg, inFlight: null } : r,
+              i === slot
+                ? {
+                    ...r,
+                    phase: 'error' as RunPhase,
+                    error: msg,
+                    inFlight: null,
+                    finishedAt: Date.now(),
+                  }
+                : r,
             ),
           );
+          persistSlot(slot);
         } finally {
           caseSkipRef.current = null;
         }
       }
-      // Mark any models we didn't reach (because of global stop) as stopped.
+      // Models we didn't reach (because of global stop) flip queued→stopped.
       setRuns((prev) =>
-        prev.map((r) => (r.phase === 'queued' ? { ...r, phase: 'stopped' as RunPhase } : r)),
+        prev.map((r) =>
+          r.sessionId === sessionId && r.phase === 'queued'
+            ? { ...r, phase: 'stopped' as RunPhase, finishedAt: Date.now() }
+            : r,
+        ),
       );
+      // Persist any that were left queued (now stopped) so history
+      // reflects the campaign's true tail.
+      for (let si = 0; si < sessionEntries.length; si++) persistSlot(appendBase + si);
       setPhase('done');
-      const finishedAt = Date.now();
-      setRunCompletedAt(finishedAt);
-      persistLastRun(finishedAt);
+      setRunCompletedAt(Date.now());
     } catch (e) {
       setRunError(e instanceof Error ? e.message : String(e));
       setPhase('error');
-      const finishedAt = Date.now();
-      setRunCompletedAt(finishedAt);
-      persistLastRun(finishedAt);
+      setRunCompletedAt(Date.now());
     } finally {
       globalAbortRef.current = null;
       caseSkipRef.current = null;
@@ -320,7 +394,7 @@ export function LocalModelsShell() {
     // user edits / customs / reorder hydrated from localStorage), and
     // every subsequent run uses that frozen copy regardless of what the
     // panel shows. Same bug applied to retryCase below.
-  }, [selectedList, runConfig, runConfigEnabled, getPerModel, effectiveSuite]);
+  }, [selectedList, runConfig, runConfigEnabled, getPerModel, effectiveSuite, runs.length]);
 
   const stopBench = useCallback(() => {
     globalAbortRef.current?.abort();
@@ -330,47 +404,35 @@ export function LocalModelsShell() {
     caseSkipRef.current?.();
   }, []);
 
+  // "Clear results" pops only the latest session — older runs stay
+  // in view AND in IDB. Use the History dialog to delete arbitrary
+  // runs or wipe everything.
   const clearResults = useCallback(() => {
+    setRuns((prev) => {
+      if (prev.length === 0) return prev;
+      const lastSessionId = prev[prev.length - 1]?.sessionId;
+      if (lastSessionId === undefined) return prev;
+      void deleteSessionFromHistory(lastSessionId);
+      return prev.filter((r) => r.sessionId !== lastSessionId);
+    });
+    setRunError(null);
+    setPhase((p) => (p === 'done' || p === 'error' ? 'ready' : p));
+  }, []);
+
+  // History dialog actions — delete by runId or session, or wipe all.
+  const onDeleteRunsFromHistory = useCallback((runIds: ReadonlySet<string>) => {
+    if (runIds.size === 0) return;
+    setRuns((prev) => prev.filter((r) => !runIds.has(r.runId)));
+  }, []);
+  const onWipeHistory = useCallback(() => {
+    void clearAllRuns();
     setRuns([]);
     setRunError(null);
     setRunStartedAt(null);
     setRunCompletedAt(null);
     setElapsedMs(0);
     setPhase((p) => (p === 'done' || p === 'error' ? 'ready' : p));
-    try {
-      window.localStorage.removeItem(HYDRATED_FROM_STORAGE);
-    } catch {
-      /* ignore */
-    }
   }, []);
-
-  // Persist a slim snapshot of the just-finished bench so a page
-  // refresh restores the table. Image data URLs are stripped — they
-  // can be megabytes each and bust the origin quota.
-  const persistLastRun = useCallback(
-    (completedAt: number) => {
-      try {
-        const slim = runs.map((r) => ({
-          ...r,
-          inFlight: null,
-          rows: r.rows.map((row) =>
-            row.imageDataUrl !== null ? { ...row, imageDataUrl: null } : row,
-          ),
-        }));
-        const payload = {
-          savedAt: completedAt,
-          runs: slim,
-          runCompletedAt: completedAt,
-          elapsedMs,
-        };
-        window.localStorage.setItem(HYDRATED_FROM_STORAGE, JSON.stringify(payload));
-      } catch {
-        /* quota / private mode — skip silently; the in-memory copy
-           is still fine for this session. */
-      }
-    },
-    [runs, elapsedMs],
-  );
 
   // Elapsed timer: re-render every 500ms while running so the
   // status strip shows wall-clock progress. Cleaned up on unmount or
@@ -676,12 +738,20 @@ export function LocalModelsShell() {
                   type="button"
                   onClick={clearResults}
                   className="rounded-lg border border-border bg-bg px-3 py-2 text-sm font-medium text-fg hover:bg-bg-subtle print:hidden"
-                  title="Drop the previous comparison so the next run starts from scratch"
+                  title="Drop the most recent run — older runs stay in view and in History"
                 >
-                  Clear results
+                  Clear last run
                 </button>
               </>
             ) : null}
+            <button
+              type="button"
+              onClick={() => setHistoryOpen(true)}
+              className="rounded-lg border border-border bg-bg px-3 py-2 text-sm font-medium text-fg hover:bg-bg-subtle print:hidden"
+              title="Browse and manage all saved runs"
+            >
+              History
+            </button>
             <button
               type="button"
               onClick={startBench}
@@ -750,6 +820,13 @@ export function LocalModelsShell() {
           clearPerModel(modelKey(configModalModel));
           setConfigModalModel(null);
         }}
+      />
+
+      <HistoryDialog
+        open={historyOpen}
+        onOpenChange={setHistoryOpen}
+        onRunsDeleted={onDeleteRunsFromHistory}
+        onWipeAll={onWipeHistory}
       />
     </div>
   );
@@ -856,6 +933,18 @@ function StatusStrip({
       </button>
     </div>
   );
+}
+
+/**
+ * Generate a stable id for a session or a single model run. Uses
+ * the platform `crypto.randomUUID` when available, falls back to a
+ * timestamp + random hex tail.
+ */
+function newId(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID();
+  }
+  return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
 }
 
 function fmtClockTime(epochMs: number): string {
