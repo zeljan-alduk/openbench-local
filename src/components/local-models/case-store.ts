@@ -25,6 +25,10 @@ import { type InlineCase, LOCAL_MODEL_RATING_SUITE } from './builtin-suite';
 
 const STORAGE_KEY = 'openbench-local:cases';
 const STORE_VERSION = 2;
+// Tag filter persistence is independent of the cases blob — the
+// active filter is a UI preference, not part of the case data.
+const TAG_FILTER_KEY = 'openbench-local:cases:tag-filter';
+const TAG_FILTER_APPLY_KEY = 'openbench-local:cases:tag-filter-apply-to-run';
 
 interface PersistedState {
   readonly version: number;
@@ -84,12 +88,55 @@ function saveState(s: PersistedState): void {
   }
 }
 
+function loadTagFilter(): ReadonlySet<string> {
+  try {
+    const raw = window.localStorage.getItem(TAG_FILTER_KEY);
+    if (raw === null) return new Set();
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? new Set(parsed.filter((x) => typeof x === 'string')) : new Set();
+  } catch {
+    return new Set();
+  }
+}
+
+function saveTagFilter(s: ReadonlySet<string>): void {
+  try {
+    window.localStorage.setItem(TAG_FILTER_KEY, JSON.stringify([...s]));
+  } catch {
+    /* ignore */
+  }
+}
+
+function loadApplyToRun(): boolean {
+  try {
+    return window.localStorage.getItem(TAG_FILTER_APPLY_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function saveApplyToRun(on: boolean): void {
+  try {
+    window.localStorage.setItem(TAG_FILTER_APPLY_KEY, on ? '1' : '0');
+  } catch {
+    /* ignore */
+  }
+}
+
 export function useCaseStore() {
   const [state, setState] = useState<PersistedState>(EMPTY_STATE);
   const [hydrated, setHydrated] = useState(false);
+  // Tag filter (set of selected atoms) and the "apply to run" toggle.
+  // Default: nothing filtered, view-only behaviour. Persisted in
+  // localStorage independently of the cases blob so the user keeps
+  // their last category view across reloads.
+  const [tagFilter, setTagFilterState] = useState<ReadonlySet<string>>(new Set());
+  const [applyTagFilterToRun, setApplyToRunState] = useState<boolean>(false);
 
   useEffect(() => {
     setState(loadState());
+    setTagFilterState(loadTagFilter());
+    setApplyToRunState(loadApplyToRun());
     setHydrated(true);
   }, []);
 
@@ -320,11 +367,83 @@ export function useCaseStore() {
     [state, persist],
   );
 
+  // Tag filter setters with persistence side-effects baked in.
+  const setTagFilter = useCallback((next: ReadonlySet<string>) => {
+    setTagFilterState(next);
+    saveTagFilter(next);
+  }, []);
+  const toggleTag = useCallback(
+    (tag: string) => {
+      const next = new Set(tagFilter);
+      if (next.has(tag)) next.delete(tag);
+      else next.add(tag);
+      setTagFilter(next);
+    },
+    [tagFilter, setTagFilter],
+  );
+  const clearTagFilter = useCallback(() => {
+    setTagFilter(new Set());
+  }, [setTagFilter]);
+  const setApplyTagFilterToRun = useCallback((on: boolean) => {
+    setApplyToRunState(on);
+    saveApplyToRun(on);
+  }, []);
+
+  // Tag → case count, computed from the currently effective cases
+  // (excluding disabled rows so the count reflects what would
+  // actually run if the user toggled "apply to run"). Sorted by count
+  // descending then alphabetically so the chip row is stable.
+  const tagAtoms = useMemo<readonly { readonly tag: string; readonly count: number }[]>(() => {
+    const counts = new Map<string, number>();
+    for (const e of effective) {
+      if (!e.enabled) continue;
+      for (const t of e.case.tags) {
+        counts.set(t, (counts.get(t) ?? 0) + 1);
+      }
+    }
+    return [...counts.entries()]
+      .map(([tag, count]) => ({ tag, count }))
+      .sort((a, b) => b.count - a.count || a.tag.localeCompare(b.tag));
+  }, [effective]);
+
+  // Cases the panel should display: effective ∩ tag filter (when any
+  // tag is active). Empty filter = show all.
+  const viewableEffective = useMemo<readonly EffectiveCase[]>(() => {
+    if (tagFilter.size === 0) return effective;
+    return effective.filter((e) => e.case.tags.some((t) => tagFilter.has(t)));
+  }, [effective, tagFilter]);
+
+  // Cases the runner should execute. When the user has explicitly
+  // opted in to "Apply category filter to run", we run only the
+  // tag-filtered enabled set. Otherwise the runner sees every enabled
+  // case (existing behaviour). Naturally deduped because we filter
+  // directly off the effective list — each id appears once even if it
+  // matches multiple selected tags.
+  const runnableCases = useMemo(() => {
+    const base = effective.filter((e) => e.enabled);
+    if (!applyTagFilterToRun || tagFilter.size === 0) {
+      return base.map((e) => e.case);
+    }
+    return base
+      .filter((e) => e.case.tags.some((t) => tagFilter.has(t)))
+      .map((e) => e.case);
+  }, [effective, tagFilter, applyTagFilterToRun]);
+
   return {
     hydrated,
     effective,
-    /** Snapshot for the runner — only enabled cases, in the user's order. */
-    effectiveCases: effective.filter((e) => e.enabled).map((e) => e.case),
+    /** Effective list intersected with the active tag filter — drives the panel display. */
+    viewableEffective,
+    /** Tag atoms with counts, sorted for stable chip rendering. */
+    tagAtoms,
+    tagFilter,
+    setTagFilter,
+    toggleTag,
+    clearTagFilter,
+    applyTagFilterToRun,
+    setApplyTagFilterToRun,
+    /** Snapshot for the runner — enabled cases, optionally tag-filtered. */
+    effectiveCases: runnableCases,
     /** Snapshot for export — all cases, regardless of enabled state. */
     allCasesForExport: effective.map((e) => e.case),
     state,

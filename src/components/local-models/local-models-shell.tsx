@@ -690,8 +690,13 @@ export function LocalModelsShell() {
             </p>
             <h2 className="mt-1 text-base font-semibold text-fg">Rate quality × speed</h2>
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-fg-muted">
-              Eighteen cases probe instruction-following, JSON output, code reasoning, retrieval,
-              multi-step inference, refusal, arithmetic, character-level reasoning, strict
+              Eighty-six cases probe instruction-following and constrained generation, JSON
+              output, code (trace · debug · Big-O · SQL · language ID · generation), math word
+              problems · probability · algebra · geometry, classic logic puzzles &amp; object
+              tracking, ciphers (Caesar · ROT13) and base64 decoding, common misconceptions,
+              commonsense physics &amp; time, science facts, sorting, retrieval and passage
+              comprehension, multi-step inference, refusal, character-level reasoning, classifiers
+              (sentiment · toxicity · topic · question vs statement), translation, strict
               formatting, native tool calls, and vision (counting · OCR · spatial). Tool-use and
               vision cases auto-skip on models that lack the capability. Pick multiple models to
               compare side-by-side — they run one at a time.

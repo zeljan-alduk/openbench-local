@@ -155,7 +155,7 @@ Mixed content evaporates and PNA does not apply.
 
 ## How the eval suite works
 
-The 48 cases are inlined in
+The 86 cases are inlined in
 [`src/components/local-models/builtin-suite.ts`](src/components/local-models/builtin-suite.ts).
 Each case has:
 
@@ -259,7 +259,7 @@ a full case-editor:
     → explicit refusal with an "extract text first" hint, since local
     chat-completion APIs don't accept those bytes.
 - **Reset** any built-in to its default; **Delete** any custom; or
-  **Reset all** to roll back the entire suite to the shipped 48 cases.
+  **Reset all** to roll back the entire suite to the shipped 86 cases.
 - **Export YAML** — every case in the user's order. **Import YAML** —
   accepts the wrapper shape, a bare list, or a `{ suite: { cases } }`
   block.

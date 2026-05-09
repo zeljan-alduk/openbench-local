@@ -236,29 +236,6 @@ function Row({
               </span>
             ) : null}
           </div>
-          {onRetry !== undefined ? (
-            <button
-              type="button"
-              onClick={(e) => {
-                e.stopPropagation();
-                onRetry();
-              }}
-              title="Re-run just this case"
-              aria-label={`Re-run ${row.id}`}
-              className="ml-auto inline-flex h-5 w-5 items-center justify-center rounded text-fg-faint opacity-0 transition-opacity hover:bg-bg-subtle hover:text-fg group-hover:opacity-100 print:hidden"
-            >
-              <svg viewBox="0 0 12 12" className="h-3 w-3" aria-hidden>
-                <path
-                  d="M9.5 5.5 A4 4 0 1 0 8.5 8.5 M9.5 2.5 V5.5 H6.5"
-                  fill="none"
-                  stroke="currentColor"
-                  strokeWidth="1.5"
-                  strokeLinecap="round"
-                  strokeLinejoin="round"
-                />
-              </svg>
-            </button>
-          ) : null}
         </div>
       </td>
       <td className="px-2 py-2 text-center">

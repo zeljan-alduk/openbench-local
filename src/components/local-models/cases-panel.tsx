@@ -1,5 +1,5 @@
 import * as Switch from '@radix-ui/react-switch';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InlineCase } from './builtin-suite';
 import { CaseEditModal } from './case-edit-modal';
 import { type CaseSource, useCaseStore } from './case-store';
@@ -22,6 +22,13 @@ interface Props {
 export function CasesPanel({ disabled, store }: Props) {
   const {
     effective,
+    viewableEffective,
+    tagAtoms,
+    tagFilter,
+    toggleTag,
+    clearTagFilter,
+    applyTagFilterToRun,
+    setApplyTagFilterToRun,
     isBuiltin,
     upsertCase,
     deleteCase,
@@ -36,6 +43,13 @@ export function CasesPanel({ disabled, store }: Props) {
   } = store;
   const [filter, setFilter] = useState('');
   const [collapsed, setCollapsed] = useState(true);
+
+  // Auto-collapse when a run starts so the Eval-cases section gets
+  // out of the way of live results. The user can re-expand mid-run
+  // if they want to inspect cases — we don't lock the toggle.
+  useEffect(() => {
+    if (disabled) setCollapsed(true);
+  }, [disabled]);
   const [editing, setEditing] = useState<{ mode: 'add' | 'edit'; initial: InlineCase | null }>({
     mode: 'add',
     initial: null,
@@ -69,13 +83,13 @@ export function CasesPanel({ disabled, store }: Props) {
     setEditorOpen(true);
   };
 
-  // Search / filter. Empty query → no filtering. Otherwise: case-
-  // insensitive substring match across id, tags, evaluator kind, and
-  // the prompt body.
+  // Search / filter. Empty query → use the tag-filtered set straight
+  // from the store. Non-empty query → AND a substring match against
+  // id / evaluator kind / tags / prompt body on top of the tag set.
   const filtered = useMemo(() => {
     const q = filter.trim().toLowerCase();
-    if (q === '') return effective;
-    return effective.filter(({ case: c }) => {
+    if (q === '') return viewableEffective;
+    return viewableEffective.filter(({ case: c }) => {
       if (c.id.toLowerCase().includes(q)) return true;
       if (c.expect.kind.toLowerCase() === q) return true;
       if (c.expect.kind.toLowerCase().includes(q)) return true;
@@ -83,7 +97,7 @@ export function CasesPanel({ disabled, store }: Props) {
       if (c.input.toLowerCase().includes(q)) return true;
       return false;
     });
-  }, [effective, filter]);
+  }, [viewableEffective, filter]);
 
   const onBulkEnableVisible = (on: boolean) => {
     const ids = filtered.map((e) => e.case.id);
@@ -128,12 +142,18 @@ export function CasesPanel({ disabled, store }: Props) {
             Eval cases
           </p>
           <h2 className="mt-1 text-base font-semibold text-fg">
-            {effective.filter((e) => e.enabled).length} of {effective.length} case
+            {store.effectiveCases.length} of {effective.length} case
             {effective.length === 1 ? '' : 's'} will run
+            {applyTagFilterToRun && tagFilter.size > 0 ? (
+              <span className="ml-2 rounded-full bg-accent/15 px-2 py-0.5 align-middle font-mono text-[10px] font-semibold uppercase tracking-wider text-accent">
+                category filter on
+              </span>
+            ) : null}
           </h2>
           <p className="mt-1 max-w-2xl text-xs leading-relaxed text-fg-muted">
             Built-in cases ship by default. Edit any of them, hide the ones you don't care about,
-            or add your own — saved to your browser, exportable as YAML.
+            or add your own — saved to your browser, exportable as YAML. Group with categories
+            below to focus on a single capability.
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -190,6 +210,18 @@ export function CasesPanel({ disabled, store }: Props) {
 
       {!collapsed ? (
         <div className="px-5 py-5">
+          {tagAtoms.length > 0 ? (
+            <TagFilterRow
+              tagAtoms={tagAtoms}
+              tagFilter={tagFilter}
+              onToggleTag={toggleTag}
+              onClear={clearTagFilter}
+              applyToRun={applyTagFilterToRun}
+              onApplyToRunChange={setApplyTagFilterToRun}
+              visibleCount={filtered.length}
+              totalCount={effective.length}
+            />
+          ) : null}
           <div className="mb-4 flex flex-wrap items-center gap-2">
             <div className="relative flex-1 min-w-[14rem]">
               <input
@@ -249,6 +281,8 @@ export function CasesPanel({ disabled, store }: Props) {
                 disabled={disabled}
                 isDragging={draggingId === c.id}
                 isDropTarget={dropOverId === c.id && draggingId !== null && draggingId !== c.id}
+                tagFilter={tagFilter}
+                onTagClick={(t) => toggleTag(t)}
                 onEdit={() => onEdit(c)}
                 onDuplicate={() => onDuplicate(c)}
                 onDelete={() => deleteCase(c.id)}
@@ -336,6 +370,8 @@ interface CaseRowProps {
   readonly disabled: boolean;
   readonly isDragging: boolean;
   readonly isDropTarget: boolean;
+  readonly tagFilter: ReadonlySet<string>;
+  readonly onTagClick: (tag: string) => void;
   readonly onEdit: () => void;
   readonly onDuplicate: () => void;
   readonly onDelete: () => void;
@@ -354,6 +390,8 @@ function CaseRow({
   disabled,
   isDragging,
   isDropTarget,
+  tagFilter,
+  onTagClick,
   onEdit,
   onDuplicate,
   onDelete,
@@ -400,11 +438,28 @@ function CaseRow({
               needs {c.requires}
             </span>
           ) : null}
-          {c.tags.slice(0, 3).map((t) => (
-            <span key={t} className="text-[10px] text-fg-faint">
-              #{t}
-            </span>
-          ))}
+          {c.tags.map((t) => {
+            const active = tagFilter.has(t);
+            return (
+              <button
+                type="button"
+                key={t}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onTagClick(t);
+                }}
+                className={[
+                  'rounded-full border px-1.5 py-0.5 font-mono text-[10px] transition-colors',
+                  active
+                    ? 'border-accent/60 bg-accent/15 text-accent'
+                    : 'border-transparent text-fg-faint hover:border-border hover:bg-bg-subtle hover:text-fg-muted',
+                ].join(' ')}
+                title={active ? `Remove "${t}" from filter` : `Filter to "${t}"`}
+              >
+                #{t}
+              </button>
+            );
+          })}
         </div>
         <p className="truncate text-[12px] text-fg-muted" title={c.input}>
           {preview}
@@ -461,6 +516,104 @@ function CaseRow({
         )}
       </div>
     </li>
+  );
+}
+
+/**
+ * Tag chip filter row. Shows every tag observed on the currently
+ * effective cases as a togglable chip. Selected chips union — a case
+ * is visible if it carries at least one selected tag. Below the
+ * chips, an "Apply to run" toggle lets the user opt in to passing
+ * the filtered subset to the runner instead of the full enabled set.
+ */
+function TagFilterRow({
+  tagAtoms,
+  tagFilter,
+  onToggleTag,
+  onClear,
+  applyToRun,
+  onApplyToRunChange,
+  visibleCount,
+  totalCount,
+}: {
+  tagAtoms: readonly { readonly tag: string; readonly count: number }[];
+  tagFilter: ReadonlySet<string>;
+  onToggleTag: (tag: string) => void;
+  onClear: () => void;
+  applyToRun: boolean;
+  onApplyToRunChange: (on: boolean) => void;
+  visibleCount: number;
+  totalCount: number;
+}) {
+  const active = tagFilter.size > 0;
+  return (
+    <div className="mb-3 flex flex-col gap-2 rounded-lg border border-border bg-bg/50 px-3 py-2">
+      <div className="flex flex-wrap items-baseline gap-2">
+        <p className="text-[11px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+          Categories
+        </p>
+        <span className="font-mono text-[10px] text-fg-faint">
+          {active ? `${visibleCount}/${totalCount} visible` : `${tagAtoms.length} tags`}
+        </span>
+        {active ? (
+          <button
+            type="button"
+            onClick={onClear}
+            className="ml-auto rounded border border-border bg-bg px-2 py-0.5 font-mono text-[10px] text-fg-muted hover:border-accent hover:text-accent"
+            title="Clear category filter"
+          >
+            Clear
+          </button>
+        ) : null}
+      </div>
+      <div className="flex flex-wrap gap-1">
+        {tagAtoms.map(({ tag, count }) => {
+          const on = tagFilter.has(tag);
+          return (
+            <button
+              type="button"
+              key={tag}
+              onClick={() => onToggleTag(tag)}
+              className={[
+                'inline-flex items-center gap-1 rounded-full border px-2 py-0.5 font-mono text-[11px] transition-colors',
+                on
+                  ? 'border-accent/60 bg-accent/15 text-accent'
+                  : 'border-border bg-bg text-fg-muted hover:border-accent/40 hover:text-fg',
+              ].join(' ')}
+              title={on ? `Remove "${tag}" from filter` : `Add "${tag}" to filter`}
+            >
+              <span>#{tag}</span>
+              <span className="font-mono text-[9px] text-fg-faint">{count}</span>
+            </button>
+          );
+        })}
+      </div>
+      <label
+        className={[
+          'flex select-none items-center gap-2 text-[11px]',
+          active ? 'text-fg' : 'text-fg-faint',
+        ].join(' ')}
+        title={
+          active
+            ? 'Run only the cases matching the active filter'
+            : 'Pick at least one tag to enable run filtering'
+        }
+      >
+        <input
+          type="checkbox"
+          checked={applyToRun}
+          onChange={(e) => onApplyToRunChange(e.target.checked)}
+          disabled={!active}
+          className="h-3.5 w-3.5 accent-accent"
+        />
+        Apply category filter to run
+        {applyToRun && active ? (
+          <span className="rounded-full bg-accent/15 px-1.5 py-0.5 font-mono text-[10px] text-accent">
+            on
+          </span>
+        ) : null}
+      </label>
+    </div>
   );
 }
 

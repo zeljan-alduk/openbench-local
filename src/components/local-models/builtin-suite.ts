@@ -83,9 +83,9 @@ export interface InlineSuite {
 export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
   id: 'local-model-rating',
   name: 'local-model-rating',
-  version: '0.4.0',
+  version: '0.6.0',
   description:
-    'Forty-eight cases covering instruction-following, structured output, code reasoning, mid- and long-context retrieval, multi-step inference, refusal, arithmetic (decimal, hex, binary, modular), character-level reasoning (counting letters, palindromes, anagrams, reversal), tool-call shape, native tool calling, classification (sentiment, spam/ham, enum, odd-one-out), boolean logic, Roman numerals, unit and base conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, language identification, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Tool-use and vision cases auto-skip on models that lack the capability.',
+    'Eighty-six cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), and DROP (passage comprehension), plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Tool-use and vision cases auto-skip on models that lack the capability.',
   passThreshold: 0.6,
   cases: [
     {
@@ -690,6 +690,313 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       expect: { kind: 'regex', value: '^OK\\s*\\n\\s*42\\s*$' },
       weight: 1,
       tags: ['instruction-following', 'structured-output'],
+    },
+    {
+      id: 'puzzle-train-meeting',
+      input:
+        'Two trains start 240 km apart and travel toward each other. Train A goes 60 km/h, Train B goes 40 km/h. After how many hours do they meet? Reply with only the number (e.g. 1.5), no units, no commentary.',
+      expect: { kind: 'regex', value: '^2\\.4$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic'],
+    },
+    {
+      id: 'puzzle-age-doubled',
+      input:
+        "John is twice as old as his daughter Mary. In 8 years, the sum of their ages will be 52. How old is Mary now? Reply with only the integer, no commentary.",
+      expect: { kind: 'regex', value: '^12$' },
+      weight: 1,
+      tags: ['reasoning', 'math'],
+    },
+    {
+      id: 'puzzle-pythagorean',
+      input:
+        'A right triangle has legs of length 3 and 4. What is the length of the hypotenuse? Reply with only the integer, no units, no commentary.',
+      expect: { kind: 'regex', value: '^5$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'geometry'],
+    },
+    {
+      id: 'puzzle-sequence-next',
+      input:
+        'What number comes next in this sequence: 2, 6, 12, 20, 30, ? — Reply with only the integer, no commentary.',
+      expect: { kind: 'regex', value: '^42$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'sequence'],
+    },
+    {
+      id: 'puzzle-day-of-week',
+      input:
+        'If today is Tuesday, what day of the week will it be exactly 100 days from now? Reply with only the day name, capitalized (e.g. Monday).',
+      expect: { kind: 'regex', value: '^Thursday$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic'],
+    },
+    {
+      id: 'probability-three-coins',
+      input:
+        'Three fair coins are flipped. What is the probability that at least one lands heads? Reply as a fraction in lowest terms (e.g. 1/2). No decimals, no commentary.',
+      expect: { kind: 'regex', value: '^7/8$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'probability'],
+    },
+    {
+      id: 'probability-dice-sum',
+      input:
+        'Two fair six-sided dice are rolled. What is the probability that their sum is exactly 7? Reply as a fraction in lowest terms (e.g. 1/2). No commentary.',
+      expect: { kind: 'regex', value: '^1/6$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'probability'],
+    },
+    {
+      id: 'code-fix-reverse-bug',
+      input:
+        'This Python function should reverse a string but has a bug. Output ONLY the corrected return-statement line, nothing else. No commentary, no def line, no surrounding code.\n\ndef reverse(s):\n    return s[::1]',
+      expect: { kind: 'regex', value: 's\\[::-1\\]' },
+      weight: 1,
+      tags: ['code', 'debugging', 'reasoning'],
+    },
+    {
+      id: 'code-trace-for-loop',
+      input:
+        'What does this Python program print?\n\nx = 5\nfor i in range(3):\n    x += i\nprint(x)\n\nReply with only the integer, no commentary.',
+      expect: { kind: 'regex', value: '^8$' },
+      weight: 1,
+      tags: ['code', 'reasoning'],
+    },
+    {
+      id: 'code-bigO-nested',
+      input:
+        'What is the time complexity of this snippet?\n\nfor i in range(n):\n    for j in range(n):\n        total += i * j\n\nReply with Big-O notation only, e.g. O(n). No commentary.',
+      expect: {
+        kind: 'regex',
+        value: '^\\s*O\\(\\s*n\\s*(?:\\^\\s*2|\\*\\*\\s*2|²)\\s*\\)\\s*$',
+      },
+      weight: 1,
+      tags: ['code', 'reasoning'],
+    },
+    {
+      id: 'code-identify-language',
+      input:
+        'What programming language is this snippet?\n\nfn main() {\n    println!("Hello, world!");\n}\n\nReply with only the language name, one word.',
+      expect: { kind: 'regex', value: '^[Rr]ust$' },
+      weight: 1,
+      tags: ['code', 'classification'],
+    },
+    {
+      id: 'sql-clause-having',
+      input:
+        'In SQL, which clause filters aggregate results AFTER GROUP BY? Reply with only the keyword in uppercase, no commentary.',
+      expect: { kind: 'regex', value: '^HAVING$' },
+      weight: 1,
+      tags: ['code', 'fact'],
+    },
+    {
+      id: 'logic-knights-knaves',
+      input:
+        'On Knights and Knaves Island, knights ALWAYS tell the truth and knaves ALWAYS lie. Alice says: "Both Bob and I are knaves." Is Alice a knight or a knave? Reply with one word: Knight or Knave.',
+      expect: { kind: 'regex', value: '^[Kk]nave$' },
+      weight: 1,
+      tags: ['reasoning', 'logic'],
+    },
+    {
+      id: 'logic-bear-color',
+      input:
+        'A hunter walks 1 km south, then 1 km east, then 1 km north and finds himself back where he started. He sees a bear. What color is the bear? Reply with one word.',
+      expect: { kind: 'regex', value: '^[Ww]hite$' },
+      weight: 1,
+      tags: ['reasoning', 'logic', 'gotcha'],
+    },
+    {
+      id: 'logic-affirming-consequent',
+      input:
+        'Premises: (1) If it rains, the ground gets wet. (2) The ground is wet. Conclusion: It rained. Is this conclusion logically guaranteed by the premises alone? Reply with only YES or NO, uppercase.',
+      expect: { kind: 'regex', value: '^NO$' },
+      weight: 1,
+      tags: ['reasoning', 'logic'],
+    },
+    {
+      id: 'logic-sister-count',
+      input:
+        "Lisa's brother has three sisters, and Lisa is one of them. How many sisters does Lisa have? Reply with only the integer, no commentary.",
+      expect: { kind: 'regex', value: '^2$' },
+      weight: 1,
+      tags: ['reasoning', 'logic'],
+    },
+    {
+      id: 'classify-toxicity-safe',
+      input:
+        'Classify the message as TOXIC or SAFE. Output only one word in uppercase, no commentary.\n\nMessage: I really appreciated your help on the project today, thank you!',
+      expect: { kind: 'regex', value: '^SAFE$' },
+      weight: 1,
+      tags: ['classification', 'safety-shape'],
+    },
+    {
+      id: 'classify-topic-finance',
+      input:
+        'Classify the topic as one of: SPORTS, FINANCE, TECH, HEALTH. Output only the category in uppercase, no commentary.\n\nText: The S&P 500 closed up 1.5% on Tuesday after the Fed kept interest rates unchanged.',
+      expect: { kind: 'regex', value: '^FINANCE$' },
+      weight: 1,
+      tags: ['classification'],
+    },
+    {
+      id: 'classify-question-vs-statement',
+      input:
+        'Is the following sentence a QUESTION or a STATEMENT? Reply with only one word in uppercase, no commentary.\n\nWhere did you go yesterday?',
+      expect: { kind: 'regex', value: '^QUESTION$' },
+      weight: 1,
+      tags: ['classification', 'fast'],
+    },
+    {
+      id: 'translate-apple-de',
+      input:
+        'Translate the English word "apple" to German. Output only the German word, no article, no commentary.',
+      expect: { kind: 'regex', value: '^Apfel$' },
+      weight: 1,
+      tags: ['classification', 'multilingual'],
+    },
+    {
+      id: 'truthfulqa-bats-blind',
+      input:
+        'Are bats blind? Reply with only YES or NO, uppercase, no commentary.',
+      expect: { kind: 'regex', value: '^NO$' },
+      weight: 1,
+      tags: ['world-knowledge', 'gotcha', 'fact'],
+    },
+    {
+      id: 'commonsense-ice-water',
+      input:
+        'You drop a normal ice cube into a glass of room-temperature water. What happens immediately? Reply with only the letter.\n(A) it sinks to the bottom\n(B) it floats on top\n(C) it dissolves instantly\n(D) it evaporates',
+      expect: { kind: 'regex', value: '^B$' },
+      weight: 1,
+      tags: ['commonsense', 'reasoning', 'fast'],
+    },
+    {
+      id: 'commonsense-time-clock',
+      input:
+        'A movie starts at 7:45 PM and runs for exactly 1 hour and 50 minutes. What time does it end? Reply in 12-hour format with AM or PM, e.g. "3:30 PM". No commentary.',
+      expect: { kind: 'regex', value: '^9:35\\s*PM$' },
+      weight: 1,
+      tags: ['reasoning', 'arithmetic', 'commonsense'],
+    },
+    {
+      id: 'science-photosynthesis-co2',
+      input:
+        'What gas do plants absorb from the air during photosynthesis? Reply with only the chemical formula (e.g. CO2, H2O, O2). No commentary.',
+      expect: { kind: 'regex', value: '^CO2$' },
+      weight: 1,
+      tags: ['science', 'fact', 'fast'],
+    },
+    {
+      id: 'science-water-boil',
+      input:
+        'At standard atmospheric pressure (1 atm), at what Celsius temperature does pure water boil? Reply with only the integer, no units, no commentary.',
+      expect: { kind: 'regex', value: '^100$' },
+      weight: 1,
+      tags: ['science', 'fact', 'fast'],
+    },
+    {
+      id: 'multi-step-bookstore-change',
+      input:
+        'A bookstore sells novels for $12 each. A customer buys 4 novels, applies a $5 coupon, and pays with a $50 bill. How much change do they receive? Reply with only the integer (no $ symbol). No commentary.',
+      expect: { kind: 'regex', value: '^7$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic'],
+    },
+    {
+      id: 'cipher-caesar-shift3',
+      input:
+        'Apply a Caesar cipher with a shift of +3 (so A→D, B→E, …) to the word HELLO. Output only the result in uppercase. No commentary.',
+      expect: { kind: 'regex', value: '^KHOOR$' },
+      weight: 1,
+      tags: ['cipher', 'character-level', 'reasoning'],
+    },
+    {
+      id: 'cipher-rot13-hello',
+      input:
+        'Apply ROT13 to the word HELLO. Output only the result in uppercase. No commentary.',
+      expect: { kind: 'regex', value: '^URYYB$' },
+      weight: 1,
+      tags: ['cipher', 'character-level', 'reasoning'],
+    },
+    {
+      id: 'anagram-listen-silent',
+      input:
+        'Rearrange the letters of LISTEN to form a six-letter English word that means "quiet" or "without sound". Output only the word, uppercase. No commentary.',
+      expect: { kind: 'regex', value: '^SILENT$' },
+      weight: 1,
+      tags: ['character-level', 'reasoning'],
+    },
+    {
+      id: 'constrained-three-words-red-blue',
+      input:
+        'Reply with EXACTLY three words separated by single spaces. The first word must be "red" (lowercase). The last word must be "blue" (lowercase). The middle word can be any single lowercase color name. No punctuation, no commentary.',
+      expect: { kind: 'regex', value: '^red\\s+[a-z]+\\s+blue$' },
+      weight: 1,
+      tags: ['instruction-following', 'structured-output'],
+    },
+    {
+      id: 'logic-syllogism-swans',
+      input:
+        'Premises: (1) All swans are birds. (2) All birds have feathers. Conclusion: All swans have feathers. Is this conclusion logically valid based ONLY on the given premises? Reply with only YES or NO, uppercase. No commentary.',
+      expect: { kind: 'regex', value: '^YES$' },
+      weight: 1,
+      tags: ['reasoning', 'logic'],
+    },
+    {
+      id: 'pragmatics-party-implicature',
+      input:
+        "Person A asks Person B: 'Are you coming to my party tonight?' Person B replies: 'I have to be up at 5 AM tomorrow for work.' Is Person B more likely indicating YES (they will come) or NO (they won't)? Reply with only the word YES or NO, uppercase.",
+      expect: { kind: 'regex', value: '^NO$' },
+      weight: 1,
+      tags: ['reasoning', 'logic', 'commonsense'],
+    },
+    {
+      id: 'algebra-solve-linear',
+      input:
+        'Solve for x: 3x + 7 = 22. Reply with only the integer value of x. No commentary.',
+      expect: { kind: 'regex', value: '^5$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'algebra'],
+    },
+    {
+      id: 'sort-numeric-list',
+      input:
+        'Sort these numbers in ascending (smallest first) order: 3, 1, 4, 1, 5, 9, 2, 6. Output only the sorted numbers separated by ", " (comma followed by single space). No brackets, no commentary.',
+      expect: { kind: 'regex', value: '^1, 1, 2, 3, 4, 5, 6, 9$' },
+      weight: 1,
+      tags: ['reasoning', 'sorting'],
+    },
+    {
+      id: 'base64-decode-hello',
+      input:
+        'Decode this base64-encoded string and output only the decoded ASCII text. No quotes, no commentary.\n\nSGVsbG8=',
+      expect: { kind: 'regex', value: '^Hello$' },
+      weight: 1,
+      tags: ['encoding', 'character-level', 'reasoning'],
+    },
+    {
+      id: 'code-gen-max-of-three',
+      input:
+        'Write a single Python expression that returns the largest of three variables named a, b, c. Output only the expression, no commentary, no surrounding code, no quotes, no print().',
+      expect: { kind: 'regex', value: 'max\\s*\\(\\s*a\\s*,\\s*b\\s*,\\s*c\\s*\\)' },
+      weight: 1,
+      tags: ['code', 'reasoning'],
+    },
+    {
+      id: 'passage-comprehension-eiffel',
+      input:
+        "Read the passage and answer the question.\n\nPassage: The Eiffel Tower was completed in 1889 for the World's Fair in Paris. It stands 330 meters tall and was the tallest man-made structure in the world for 41 years, until the Chrysler Building was completed in 1930.\n\nQuestion: For how many years did the Eiffel Tower hold the title of tallest man-made structure?\n\nReply with only the integer. No commentary.",
+      expect: { kind: 'regex', value: '^41$' },
+      weight: 1,
+      tags: ['retrieval', 'reasoning', 'comprehension'],
+    },
+    {
+      id: 'tracking-shuffled-cups',
+      input:
+        'Three balls labeled A, B, C are placed in cups 1, 2, 3 (A in cup 1, B in cup 2, C in cup 3). Then these swaps happen IN ORDER:\n1) Swap the contents of cups 1 and 2.\n2) Swap the contents of cups 2 and 3.\n\nIn which cup is ball A now? Reply with only the cup number (1, 2, or 3). No commentary.',
+      expect: { kind: 'regex', value: '^3$' },
+      weight: 1,
+      tags: ['reasoning', 'logic', 'tracking'],
     },
   ],
 };

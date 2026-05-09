@@ -40,24 +40,37 @@ interface Point {
   readonly color: string;
 }
 
-// Per-model palette. Twelve hand-picked Tailwind 500-shade colours
-// that read distinct in both light and dark mode and don't clash
-// with the accent-blue brand. Models are assigned colours
-// deterministically by id-hash so the same model lights up the same
-// shade across reruns.
+// Per-run palette. Twenty-four hand-picked colours that read
+// distinct in both light and dark mode and don't clash with the
+// accent-blue brand. Each *run* (not each model) gets its own
+// colour so re-running the same model with different params shows
+// up as visually distinct points; this matters now that history
+// can hold multiple runs per model.
 const PALETTE: readonly string[] = [
-  '#8b5cf6', // violet
-  '#10b981', // emerald
-  '#f59e0b', // amber
-  '#f43f5e', // rose
-  '#0ea5e9', // sky
-  '#d946ef', // fuchsia
-  '#84cc16', // lime
-  '#14b8a6', // teal
-  '#6366f1', // indigo
-  '#f97316', // orange
-  '#06b6d4', // cyan
-  '#ec4899', // pink
+  '#8b5cf6', // violet 500
+  '#10b981', // emerald 500
+  '#f59e0b', // amber 500
+  '#f43f5e', // rose 500
+  '#0ea5e9', // sky 500
+  '#d946ef', // fuchsia 500
+  '#84cc16', // lime 500
+  '#14b8a6', // teal 500
+  '#6366f1', // indigo 500
+  '#f97316', // orange 500
+  '#06b6d4', // cyan 500
+  '#ec4899', // pink 500
+  '#a855f7', // purple 500
+  '#22c55e', // green 500
+  '#eab308', // yellow 500
+  '#dc2626', // red 600
+  '#3b82f6', // blue 500
+  '#c084fc', // purple 400
+  '#65a30d', // lime 600
+  '#0891b2', // cyan 600
+  '#be123c', // rose 700
+  '#7c3aed', // violet 600
+  '#059669', // emerald 600
+  '#ea580c', // orange 600
 ];
 const SOURCE_LABELS: Record<string, string> = {
   ollama: 'Ollama',
@@ -129,7 +142,7 @@ export function QualitySpeedChart({ runs }: Props) {
           avgTokPerSec: tokps,
           p95LatencyMs: r.summary.p95LatencyMs,
           totalMs,
-          color: colourFor(`${r.model.source}::${r.model.id}::${r.model.port}`),
+          color: colourFor(r.runId),
         };
       });
   }, [allCandidates, excluded]);
@@ -787,7 +800,7 @@ function RunFilter({
                       aria-hidden
                       className="h-2 w-2 flex-shrink-0 rounded-full"
                       style={{
-                        background: colourFor(`${c.model.source}::${c.model.id}::${c.model.port}`),
+                        background: colourFor(c.runId),
                       }}
                     />
                     <span className="flex-1 truncate font-mono text-[11px] text-fg" title={c.model.id}>
