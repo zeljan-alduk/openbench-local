@@ -866,7 +866,11 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       id: 'commonsense-ice-water',
       input:
         'You drop a normal ice cube into a glass of room-temperature water. What happens immediately? Reply with only the letter.\n(A) it sinks to the bottom\n(B) it floats on top\n(C) it dissolves instantly\n(D) it evaporates',
-      expect: { kind: 'regex', value: '^B$' },
+      // Options are labelled "(B)" in the prompt, so a model that follows
+      // "reply with only the letter" still naturally echoes the parens.
+      // Accept "B" or "(B)" — the letter is what we're grading, not the
+      // punctuation around it.
+      expect: { kind: 'regex', value: '^\\(?B\\)?$' },
       weight: 1,
       tags: ['commonsense', 'reasoning', 'fast'],
     },
