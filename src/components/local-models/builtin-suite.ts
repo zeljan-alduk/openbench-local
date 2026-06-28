@@ -83,9 +83,9 @@ export interface InlineSuite {
 export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
   id: 'local-model-rating',
   name: 'local-model-rating',
-  version: '0.6.0',
+  version: '0.7.0',
   description:
-    'Eighty-six cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), and DROP (passage comprehension), plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Tool-use and vision cases auto-skip on models that lack the capability.',
+    'Ninety-four cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Tool-use and vision cases auto-skip on models that lack the capability.',
   passThreshold: 0.6,
   cases: [
     {
@@ -1002,6 +1002,79 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       expect: { kind: 'regex', value: '^3$' },
       weight: 1,
       tags: ['reasoning', 'logic', 'tracking'],
+    },
+
+    // ── Gotcha extension (v0.7) ──────────────────────────────────────
+    // Eight widely-documented "easy problems LLMs get wrong": the
+    // 9.11-vs-9.9 decimal-comparison fail, the three Cognitive Reflection
+    // Test items (bat-and-ball, widgets, lily-pad), the LAION "Alice in
+    // Wonderland" (AIW) sibling problem, a second character-counting trap,
+    // the pound-of-feathers weight trick, and Monty Hall. Each has a
+    // single deterministic answer; the intuitive/heuristic answer is the
+    // wrong one, which is exactly what these probe.
+    {
+      id: 'gotcha-decimal-compare',
+      input:
+        'Which is larger: 9.11 or 9.9? Reply with only the number, no commentary, no explanation.',
+      expect: { kind: 'regex', value: '^9\\.90*$' },
+      weight: 1,
+      tags: ['reasoning', 'arithmetic', 'gotcha', 'fast'],
+    },
+    {
+      id: 'gotcha-crt-bat-ball',
+      input:
+        'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost, in cents? Reply with only the integer number of cents, no commentary.',
+      expect: { kind: 'regex', value: '^5$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'gotcha'],
+    },
+    {
+      id: 'gotcha-crt-widgets',
+      input:
+        'If it takes 5 machines 5 minutes to make 5 widgets, how many minutes would it take 100 machines to make 100 widgets? Reply with only the integer, no commentary.',
+      expect: { kind: 'regex', value: '^5$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'gotcha'],
+    },
+    {
+      id: 'gotcha-crt-lily-pad',
+      input:
+        'In a lake there is a patch of lily pads. Every day the patch doubles in size. If it takes 48 days for the patch to cover the entire lake, how many days would it take to cover half of the lake? Reply with only the integer, no commentary.',
+      expect: { kind: 'regex', value: '^47$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'gotcha'],
+    },
+    {
+      id: 'gotcha-aiw-siblings',
+      input:
+        "Alice has 3 brothers and she also has 2 sisters. How many sisters does Alice's brother have? Reply with only the integer, no commentary.",
+      expect: { kind: 'regex', value: '^3$' },
+      weight: 1,
+      tags: ['reasoning', 'logic', 'gotcha'],
+    },
+    {
+      id: 'gotcha-count-l-lollapalooza',
+      input:
+        "How many times does the letter 'L' appear in the word 'LOLLAPALOOZA'? Reply with only the integer, no commentary.",
+      expect: { kind: 'regex', value: '^4$' },
+      weight: 1,
+      tags: ['reasoning', 'character-level', 'gotcha'],
+    },
+    {
+      id: 'gotcha-weight-feathers-bricks',
+      input:
+        'What weighs more: a pound of feathers or a pound of bricks? Reply with exactly one word: FEATHERS, BRICKS, or SAME. No commentary.',
+      expect: { kind: 'regex', value: '^SAME$' },
+      weight: 1,
+      tags: ['reasoning', 'commonsense', 'gotcha', 'fast'],
+    },
+    {
+      id: 'gotcha-monty-hall',
+      input:
+        'You are on a game show with three doors. Behind one is a car; behind the other two are goats. You pick door 1. The host, who knows what is behind every door, opens door 3 to reveal a goat, then offers you the chance to switch to door 2. To maximize your chance of winning the car, should you switch? Reply with only one word: YES or NO.',
+      expect: { kind: 'regex', value: '^YES$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'probability', 'gotcha'],
     },
   ],
 };
