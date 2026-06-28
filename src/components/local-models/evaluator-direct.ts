@@ -20,6 +20,15 @@ import type { InlineCase } from './builtin-suite';
 export interface EvalOutcome {
   readonly passed: boolean;
   readonly score: number;
+  /**
+   * Set on a "pass with remark" — a soft pass. The answer was
+   * substantively correct but only matched after we normalized away a
+   * cosmetic difference (enclosing punctuation, markdown emphasis,
+   * Unicode form, or letter case). Counts fully toward the score; the
+   * remark is a human-readable note surfaced in the UI so the deviation
+   * stays visible instead of being silently accepted or hard-failed.
+   */
+  readonly remark?: string;
   readonly detail?: unknown;
 }
 
@@ -45,19 +54,23 @@ export interface EvalRowContext {
  */
 export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome {
   switch (expect.kind) {
-    case 'contains':
-      return binary(row.content.includes(expect.value));
+    case 'contains': {
+      if (row.content.includes(expect.value)) return binary(true);
+      // Soft-pass ladder: the answer is right but wrapped/cased oddly.
+      const out = nfkcTrim(row.content);
+      const want = nfkcTrim(expect.value);
+      if (out.includes(want)) return softPass('Unicode formatting');
+      if (out.toLowerCase().includes(want.toLowerCase())) return softPass('letter case');
+      return binary(false);
+    }
     case 'not_contains':
+      // No soft-pass here: this guards against a leak/injection. A loose
+      // normalization could let a near-miss slip through, so keep it strict.
       return binary(!row.content.includes(expect.value));
     case 'regex': {
+      let re: RegExp;
       try {
-        const re = new RegExp(expect.value);
-        // Trim before matching so that a stray trailing newline (common
-        // with chat models — Qwen especially likes to append `\n`) doesn't
-        // defeat `$` anchors. Mirrors the `exact` evaluator's behavior and
-        // matches the spirit of the suite, where some patterns already
-        // pad with `\s*` and others don't.
-        return binary(re.test(row.content.trim()));
+        re = new RegExp(expect.value);
       } catch (e) {
         return {
           passed: false,
@@ -65,9 +78,29 @@ export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): 
           detail: { error: `bad regex: ${(e as Error).message}` },
         };
       }
+      // Trim before matching so that a stray trailing newline (common
+      // with chat models — Qwen especially likes to append `\n`) doesn't
+      // defeat `$` anchors. Mirrors the `exact` evaluator's behavior and
+      // matches the spirit of the suite, where some patterns already
+      // pad with `\s*` and others don't.
+      if (re.test(row.content.trim())) return binary(true);
+      // Soft-pass ladder: a correct answer the model wrapped in parens,
+      // markdown, a different Unicode form (e.g. CO₂ → CO2), or different
+      // case still passes — but with a remark so the deviation is visible.
+      const norm = stripWrappers(nfkcTrim(row.content));
+      if (re.test(norm)) return softPass('enclosing punctuation, markdown, or Unicode formatting');
+      const reCI = new RegExp(expect.value, re.flags.includes('i') ? re.flags : `${re.flags}i`);
+      if (reCI.test(norm)) return softPass('letter case');
+      return binary(false);
     }
-    case 'exact':
-      return binary(row.content.trim() === expect.value);
+    case 'exact': {
+      if (row.content.trim() === expect.value) return binary(true);
+      const out = stripWrappers(nfkcTrim(row.content));
+      const want = stripWrappers(nfkcTrim(expect.value));
+      if (out === want) return softPass('enclosing punctuation, markdown, or Unicode formatting');
+      if (out.toLowerCase() === want.toLowerCase()) return softPass('letter case');
+      return binary(false);
+    }
     case 'json_schema': {
       let parsed: unknown;
       try {
@@ -145,6 +178,39 @@ export function evaluateOutput(output: string, expect: InlineCase['expect']): Ev
 
 function binary(ok: boolean): EvalOutcome {
   return ok ? { passed: true, score: 1 } : { passed: false, score: 0 };
+}
+
+/** A soft pass: full credit, plus a note on what cosmetic difference we forgave. */
+function softPass(reason: string): EvalOutcome {
+  return { passed: true, score: 1, remark: `Correct answer; differed only in ${reason}.` };
+}
+
+/** Canonical Unicode form + trimmed. NFKC folds subscripts/superscripts/
+ * full-width forms, so "CO₂" and "ＣＯ２" both normalize to "CO2". */
+function nfkcTrim(s: string): string {
+  return s.normalize('NFKC').trim();
+}
+
+/**
+ * Peel cosmetic wrappers a model commonly adds around a short answer:
+ * markdown emphasis/code (`**B**`, `` `B` ``), and one or more layers of
+ * brackets or quotes (`(B)`, `["B"]`). Only touches the ends — interior
+ * content is left intact, so this can't turn a wrong answer into a right
+ * one, only un-dress a right one.
+ */
+function stripWrappers(s: string): string {
+  let t = s.trim();
+  let prev = '';
+  while (t !== prev) {
+    prev = t;
+    t = t
+      .replace(/^[*_`~]+/, '')
+      .replace(/[*_`~]+$/, '')
+      .replace(/^[([{"'“”‘’]+/, '')
+      .replace(/[)\]}"'“”‘’]+$/, '')
+      .trim();
+  }
+  return t;
 }
 
 // ── tiny JSON-schema subset (type / required / properties / enum / items) ───

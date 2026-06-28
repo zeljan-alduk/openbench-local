@@ -58,6 +58,13 @@ export interface BenchCaseRow {
   readonly id: string;
   readonly passed: boolean;
   /**
+   * Set on a "pass with remark" — the case passed but only after the
+   * evaluator normalized a cosmetic difference (parens, markdown,
+   * Unicode form, case). Human-readable; shown as an amber pass in the
+   * table. Undefined on a clean pass or a fail.
+   */
+  readonly remark?: string;
+  /**
    * 0..1. For single-attempt cases this matches the boolean
    * `passed`. For repeated cases, it's the pass fraction
    * (e.g. 2/3 = 0.667).
@@ -501,6 +508,7 @@ async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
     toolCalls,
     imageDataUrl: c.image?.dataUrl ?? null,
     skipped: false,
+    ...(evalResult.remark !== undefined ? { remark: evalResult.remark } : {}),
     ...(evalResult.detail !== undefined ? { detail: evalResult.detail } : {}),
   };
 }

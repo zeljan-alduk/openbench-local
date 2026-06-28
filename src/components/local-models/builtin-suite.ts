@@ -866,11 +866,10 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       id: 'commonsense-ice-water',
       input:
         'You drop a normal ice cube into a glass of room-temperature water. What happens immediately? Reply with only the letter.\n(A) it sinks to the bottom\n(B) it floats on top\n(C) it dissolves instantly\n(D) it evaporates',
-      // Options are labelled "(B)" in the prompt, so a model that follows
-      // "reply with only the letter" still naturally echoes the parens.
-      // Accept "B" or "(B)" — the letter is what we're grading, not the
-      // punctuation around it.
-      expect: { kind: 'regex', value: '^\\(?B\\)?$' },
+      // Strict "B"; a model that echoes the prompt's "(B)" label still
+      // passes via the evaluator's soft-pass normalization, flagged as a
+      // remark rather than silently accepted.
+      expect: { kind: 'regex', value: '^B$' },
       weight: 1,
       tags: ['commonsense', 'reasoning', 'fast'],
     },
@@ -886,6 +885,8 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       id: 'science-photosynthesis-co2',
       input:
         'What gas do plants absorb from the air during photosynthesis? Reply with only the chemical formula (e.g. CO2, H2O, O2). No commentary.',
+      // Strict "CO2"; the subscript rendering "CO₂" still passes via the
+      // evaluator's Unicode (NFKC) soft-pass normalization, with a remark.
       expect: { kind: 'regex', value: '^CO2$' },
       weight: 1,
       tags: ['science', 'fact', 'fast'],

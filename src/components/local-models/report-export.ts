@@ -421,7 +421,7 @@ function formatHtmlRow(row: import('./bench-direct').BenchCaseRow): string {
   const status = row.skipped
     ? { glyph: '–', cls: 'skip' }
     : row.passed
-      ? { glyph: '✓', cls: 'pass' }
+      ? { glyph: '✓', cls: row.remark !== undefined ? 'remark' : 'pass' }
       : row.error !== undefined
         ? { glyph: '!', cls: 'err' }
         : { glyph: '✗', cls: 'fail' };
@@ -436,7 +436,11 @@ function formatHtmlRow(row: import('./bench-direct').BenchCaseRow): string {
       row.skipped && row.skipReason !== undefined
         ? ` <span class="note">${escapeHtml(row.skipReason)}</span>`
         : ''
-    }${row.error !== undefined ? ` <span class="note">${escapeHtml(row.error)}</span>` : ''}</summary>`,
+    }${row.error !== undefined ? ` <span class="note">${escapeHtml(row.error)}</span>` : ''}${
+      row.passed && row.remark !== undefined
+        ? ` <span class="note">${escapeHtml(row.remark)}</span>`
+        : ''
+    }</summary>`,
   );
   out.push('<div class="detail">');
 
@@ -588,6 +592,7 @@ details > .detail { padding: 0 14px 14px; border-top: 1px solid var(--border); }
   background: var(--bg);
 }
 .row-pass .glyph { background: rgba(31,157,77,0.15); color: var(--pass); }
+.row-remark .glyph { background: rgba(201,122,0,0.15); color: var(--warn); }
 .row-fail .glyph { background: rgba(216,58,58,0.15); color: var(--fail); }
 .row-err .glyph { background: rgba(201,122,0,0.15); color: var(--warn); }
 .row-skip .glyph { background: var(--bg-alt); color: var(--fg-muted); border: 1px solid var(--border); }

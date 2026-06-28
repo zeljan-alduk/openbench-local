@@ -175,11 +175,17 @@ function Row({
         label: 'skipped',
       }
     : row.passed
-      ? {
-          glyph: '✓',
-          class: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
-          label: 'pass',
-        }
+      ? row.remark !== undefined
+        ? {
+            glyph: '✓',
+            class: 'bg-amber-500/15 text-amber-700 dark:text-amber-400',
+            label: `pass · ${row.remark}`,
+          }
+        : {
+            glyph: '✓',
+            class: 'bg-emerald-500/15 text-emerald-700 dark:text-emerald-400',
+            label: 'pass',
+          }
       : row.error !== undefined
         ? {
             glyph: '!',
@@ -233,6 +239,10 @@ function Row({
             {row.error !== undefined ? (
               <span className="truncate font-normal text-[10px] text-amber-600/80 dark:text-amber-400/80">
                 {row.error}
+              </span>
+            ) : row.passed && row.remark !== undefined ? (
+              <span className="font-normal text-[10px] text-amber-600/80 dark:text-amber-400/80">
+                {row.remark}
               </span>
             ) : null}
           </div>
