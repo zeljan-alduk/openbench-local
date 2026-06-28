@@ -1,3 +1,4 @@
+import { BuyMeCoffee } from './components/buy-me-coffee';
 import { LocalModelsShell } from './components/local-models/local-models-shell';
 import { StorageNotice } from './components/storage-notice';
 import { ThemeToggle } from './components/theme-toggle';
@@ -6,6 +7,7 @@ export function App() {
   return (
     <div className="relative overflow-hidden">
       <StorageNotice />
+      <BuyMeCoffee />
       <ThemeToggle />
       <div aria-hidden className="aldo-hero-blob print:hidden" />
       <PrintHeader />
