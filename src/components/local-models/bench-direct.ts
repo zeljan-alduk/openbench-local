@@ -558,11 +558,21 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
   // Qwen3, the plain-English instruction is what every instruction-
   // tuned model can follow. Reasoning-locked models (QwQ etc.) may
   // ignore it; that's the model's fault, not the alat's.
+  //
+  // IMPORTANT: do NOT write the literal reasoning delimiter tokens
+  // (the angle-bracket think open/close tags) in this directive. The
+  // model parrots them back inside its own chain-of-thought, and the
+  // engine's server-side reasoning parser scans the stream for that
+  // exact closing token to decide where reasoning ends. Echoing it
+  // makes the parser close the reasoning channel early, spilling the
+  // rest of the thinking — and the final answer — into `content`,
+  // which then fails the evaluator. Describe the tokens, don't spell
+  // them.
   const messages: Array<{ role: string; content: unknown }> = [];
   const sysPrompt = (cfg.systemPrompt ?? '').trim();
   const noThink =
     cfg.reasoningEffort === 'off'
-      ? "/no_think\nReply directly. Do not think out loud, do not produce <think>...</think> tags, no chain-of-thought."
+      ? '/no_think\nReply directly with only the final answer. Do not think out loud and do not emit any chain-of-thought or hidden-reasoning block.'
       : '';
   const combinedSys = [noThink, sysPrompt].filter((s) => s.length > 0).join('\n\n');
   if (combinedSys.length > 0) messages.push({ role: 'system', content: combinedSys });
