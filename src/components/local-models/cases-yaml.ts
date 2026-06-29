@@ -96,6 +96,9 @@ function validateShape(cases: readonly InlineCase[]): void {
     }
     if (c.generate !== undefined) validateGenerate(c.id, c.generate);
     if (c.acceptWithRemark !== undefined) validateAccept(c.id, c.acceptWithRemark);
+    if (c.forgiveFormatting !== undefined && typeof c.forgiveFormatting !== 'boolean') {
+      throw new Error(`Case "${c.id}": \`forgiveFormatting\` must be a boolean.`);
+    }
   }
 }
 

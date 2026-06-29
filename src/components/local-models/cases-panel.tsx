@@ -447,6 +447,14 @@ function CaseRow({
               ⚙ param
             </span>
           ) : null}
+          {c.forgiveFormatting === true ? (
+            <span
+              className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400"
+              title="Cosmetic softener on — an answer differing only by punctuation, markdown, LaTeX, Unicode, or case passes with a remark. Per-case; toggled in the editor."
+            >
+              ⚖ soften
+            </span>
+          ) : null}
           {c.tags.map((t) => {
             const active = tagFilter.has(t);
             return (

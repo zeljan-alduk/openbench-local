@@ -65,6 +65,16 @@ export interface InlineCase {
    */
   readonly acceptWithRemark?: readonly AcceptClause[];
   /**
+   * Opt in to the cosmetic soft-pass for THIS case: forgive an answer
+   * that differs from `expect` only by enclosing punctuation, markdown,
+   * LaTeX (`\boxed{…}`), Unicode form (CO₂→CO2), or letter case — passing
+   * it with a remark instead of failing. There is no global softener;
+   * forgiveness is off unless a case sets this. Default (omitted/false)
+   * = strict: only an exact match plus any `acceptWithRemark` clauses
+   * pass.
+   */
+  readonly forgiveFormatting?: boolean;
+  /**
    * When set, sent as the `tools` field on the chat completion
    * request. Triggers native tool-calling behaviour.
    */
@@ -131,14 +141,58 @@ export interface InlineSuite {
   readonly cases: readonly InlineCase[];
 }
 
+/**
+ * Built-in cases that opt in to the per-case cosmetic softener
+ * (`forgiveFormatting`): an answer differing from `expect` only by
+ * enclosing punctuation, markdown, LaTeX (`\boxed{…}`), Unicode form, or
+ * letter case passes with a remark instead of failing. There is no
+ * global softener — this set IS the per-case definition, applied below.
+ *
+ * Deliberately EXCLUDED (kept strict): instruction/format-following
+ * tests where the formatting is the thing under test (case-uppercase,
+ * strip-markdown, multi-constraint-format, exact-five-words,
+ * multi-line-format, sort-*, set/list formats, regex-shape-version),
+ * case-sensitive value tests (string-reverse, substring-extract,
+ * base64-decode, retrieval tokens), safety / not_contains, and
+ * structured (json_schema / tool_call) and already-case-insensitive
+ * regexes.
+ */
+const FORGIVE_FORMATTING_IDS: ReadonlySet<string> = new Set([
+  'arithmetic-exact', 'count-letters', 'vision-count-circles', 'vision-spatial-relation',
+  'count-r-strawberry', 'count-vowels-encyclopedia', 'palindrome-detect', 'anagram-pair',
+  'roman-to-int', 'boolean-evaluate', 'enum-mammal', 'sentiment-classifier',
+  'unit-convert-km-mile', 'modular-arithmetic', 'base-conversion-binary', 'hex-arithmetic',
+  'odd-one-out', 'spam-classifier', 'max-of-list', 'median-calc', 'puzzle-train-meeting',
+  'puzzle-age-doubled', 'puzzle-pythagorean', 'puzzle-sequence-next', 'puzzle-day-of-week',
+  'probability-three-coins', 'probability-dice-sum', 'code-fix-reverse-bug', 'code-trace-for-loop',
+  'code-bigO-nested', 'sql-clause-having', 'logic-affirming-consequent', 'logic-sister-count',
+  'classify-toxicity-safe', 'classify-topic-finance', 'classify-question-vs-statement',
+  'translate-apple-de', 'truthfulqa-bats-blind', 'commonsense-ice-water', 'commonsense-time-clock',
+  'science-photosynthesis-co2', 'science-water-boil', 'multi-step-bookstore-change',
+  'cipher-caesar-shift3', 'cipher-rot13-hello', 'anagram-listen-silent', 'logic-syllogism-swans',
+  'pragmatics-party-implicature', 'algebra-solve-linear', 'code-gen-max-of-three',
+  'passage-comprehension-eiffel', 'tracking-shuffled-cups', 'gotcha-decimal-compare',
+  'gotcha-crt-bat-ball', 'gotcha-crt-widgets', 'gotcha-crt-lily-pad', 'gotcha-aiw-siblings',
+  'gotcha-count-l-lollapalooza', 'gotcha-weight-feathers-bricks', 'gotcha-monty-hall',
+  'order-of-operations', 'leap-year-1900', 'percent-of', 'fraction-compare', 'count-evens',
+  'reverse-word-order',
+]);
+
+/** Stamp the per-case softener flag onto the cases named in the set above. */
+function applyForgiveFormatting(cases: readonly InlineCase[]): InlineCase[] {
+  return cases.map((c) =>
+    FORGIVE_FORMATTING_IDS.has(c.id) ? { ...c, forgiveFormatting: true } : c,
+  );
+}
+
 export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
   id: 'local-model-rating',
   name: 'local-model-rating',
-  version: '0.8.0',
+  version: '0.9.0',
   description:
-    'Ninety-four cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Several cases are parameterized — their prompt and expected answer are re-randomized each run so a model cannot pass famous gotchas from memorization. Tool-use and vision cases auto-skip on models that lack the capability.',
+    'One hundred cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days · percent · fractions · operator precedence), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall, leap-year rule), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Several cases are parameterized — their prompt and expected answer are re-randomized each run so a model cannot pass famous gotchas from memorization — and each case decides per-case whether to forgive cosmetic formatting (parens / markdown / LaTeX / Unicode / case) with a remark. Tool-use and vision cases auto-skip on models that lack the capability.',
   passThreshold: 0.6,
-  cases: [
+  cases: applyForgiveFormatting([
     {
       id: 'echo-instruction',
       input: 'Reply with exactly: BENCH_TOKEN. No reasoning, no preamble, no commentary.',
@@ -1205,5 +1259,56 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       weight: 1,
       tags: ['reasoning', 'math', 'probability', 'gotcha'],
     },
-  ],
+
+    // ── Round-100 extension (v0.9) ───────────────────────────────────
+    // Six more deterministic cases targeting weak spots of small local
+    // models: operator precedence, the 100/400 leap-year rule, percent
+    // and fraction reasoning, list filtering, and word-order reversal.
+    {
+      id: 'order-of-operations',
+      input:
+        'Compute 2 + 3 * 4. Reply with ONLY the integer result, no commentary, no working.',
+      expect: { kind: 'regex', value: '^14$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic', 'gotcha', 'fast'],
+    },
+    {
+      id: 'leap-year-1900',
+      input: 'Is the year 1900 a leap year? Reply with only YES or NO, uppercase. No commentary.',
+      expect: { kind: 'regex', value: '^NO$' },
+      weight: 1,
+      tags: ['reasoning', 'fact', 'gotcha', 'fast'],
+    },
+    {
+      id: 'percent-of',
+      input: 'What is 15% of 80? Reply with only the integer, no commentary.',
+      expect: { kind: 'regex', value: '^12$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic'],
+    },
+    {
+      id: 'fraction-compare',
+      input:
+        'Which fraction is larger: 3/8 or 2/5? Reply with only the larger fraction exactly as written (e.g. 1/2). No commentary.',
+      expect: { kind: 'regex', value: '^2/5$' },
+      weight: 1,
+      tags: ['reasoning', 'math', 'arithmetic'],
+    },
+    {
+      id: 'count-evens',
+      input:
+        'How many even numbers are in this list? Reply with only the integer, no commentary.\n\nList: 7, 12, 5, 8, 3, 20, 11',
+      expect: { kind: 'regex', value: '^3$' },
+      weight: 1,
+      tags: ['reasoning', 'arithmetic', 'counting'],
+    },
+    {
+      id: 'reverse-word-order',
+      input:
+        'Reverse the ORDER of the words in this sentence and reply with only the result, nothing else: the quick brown fox',
+      expect: { kind: 'contains', value: 'fox brown quick the' },
+      weight: 1,
+      tags: ['reasoning', 'character-level'],
+    },
+  ]),
 };

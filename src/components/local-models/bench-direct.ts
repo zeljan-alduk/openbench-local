@@ -486,6 +486,7 @@ async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
     { content: captured.content, toolCalls },
     c.expect,
     c.acceptWithRemark,
+    c.forgiveFormatting,
   );
   const reasoningRatio =
     captured.tokensReasoning !== null && captured.tokensOut !== null && captured.tokensOut > 0

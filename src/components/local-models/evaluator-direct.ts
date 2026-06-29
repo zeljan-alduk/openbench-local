@@ -61,13 +61,15 @@ export function evaluateRow(
   row: EvalRowContext,
   expect: InlineCase['expect'],
   acceptWithRemark?: readonly AcceptClause[],
+  forgiveFormatting?: boolean,
 ): EvalOutcome {
-  const primary = evalOne(row, expect);
+  const forgive = forgiveFormatting === true;
+  const primary = evalOne(row, expect, forgive);
   if (primary.passed || acceptWithRemark === undefined || acceptWithRemark.length === 0) {
     return primary;
   }
   for (const clause of acceptWithRemark) {
-    if (evalOne(row, { kind: clause.kind, value: clause.value }).passed) {
+    if (evalOne(row, { kind: clause.kind, value: clause.value }, forgive).passed) {
       return {
         passed: true,
         score: 1,
@@ -79,11 +81,18 @@ export function evaluateRow(
   return primary;
 }
 
-/** Match a row against a single evaluator clause (strict + cosmetic soft-pass). */
-function evalOne(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome {
+/**
+ * Match a row against a single evaluator clause. Strict by default —
+ * only an exact match passes. When `forgive` is true (the case opted in)
+ * we also run the cosmetic soft-pass ladder, forgiving
+ * parens/markdown/LaTeX/Unicode/case with a remark. There is no global
+ * softener: forgiveness is a per-case choice.
+ */
+function evalOne(row: EvalRowContext, expect: InlineCase['expect'], forgive = false): EvalOutcome {
   switch (expect.kind) {
     case 'contains': {
       if (row.content.includes(expect.value)) return binary(true);
+      if (!forgive) return binary(false);
       // Soft-pass ladder: the answer is right but wrapped/cased oddly.
       const out = nfkcTrim(row.content);
       const want = nfkcTrim(expect.value);
@@ -112,6 +121,7 @@ function evalOne(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome
       // matches the spirit of the suite, where some patterns already
       // pad with `\s*` and others don't.
       if (re.test(row.content.trim())) return binary(true);
+      if (!forgive) return binary(false);
       // Soft-pass ladder: a correct answer the model wrapped in parens,
       // markdown, a different Unicode form (e.g. CO₂ → CO2), or different
       // case still passes — but with a remark so the deviation is visible.
@@ -123,6 +133,7 @@ function evalOne(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome
     }
     case 'exact': {
       if (row.content.trim() === expect.value) return binary(true);
+      if (!forgive) return binary(false);
       const out = stripWrappers(nfkcTrim(row.content));
       const want = stripWrappers(nfkcTrim(expect.value));
       if (out === want) return softPass('enclosing punctuation, markdown, LaTeX, or Unicode formatting');

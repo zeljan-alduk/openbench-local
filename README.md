@@ -41,7 +41,7 @@ are described in [CI / CD](#ci--cd) below.
 
 1. **Probes `127.0.0.1`** for any OpenAI-compatible LLM server — Ollama,
    LM Studio, vLLM, llama.cpp, and any custom host you add.
-2. **Runs a 94-case eval suite** against every model you select.
+2. **Runs a 100-case eval suite** against every model you select.
    Each case carries one or more **tags** so you can group cases by
    capability and either filter the panel view or opt-in to running
    only the matching subset. Coverage:
@@ -71,7 +71,7 @@ are described in [CI / CD](#ci--cd) below.
    (`tool_use` / `vision`).
 
    Typical wall-clock for a single model on a modern laptop is
-   **~10–15 minutes** for the full 94-case run (closer to 5 min
+   **~10–15 minutes** for the full 100-case run (closer to 5 min
    for a fast 7B, 25+ min for a reasoning model on high effort).
    The runner is sequential per model so multi-model comparisons
    scale linearly. **Use the category filter** to run a single
@@ -185,7 +185,7 @@ Mixed content evaporates and PNA does not apply.
 
 ## How the eval suite works
 
-The 94 cases are inlined in
+The 100 cases are inlined in
 [`src/components/local-models/builtin-suite.ts`](src/components/local-models/builtin-suite.ts).
 Each case has:
 
@@ -367,7 +367,7 @@ a full case-editor:
     → explicit refusal with an "extract text first" hint, since local
     chat-completion APIs don't accept those bytes.
 - **Reset** any built-in to its default; **Delete** any custom; or
-  **Reset all** to roll back the entire suite to the shipped 94 cases.
+  **Reset all** to roll back the entire suite to the shipped 100 cases.
 - **Export YAML** — every case in the user's order. **Import YAML** —
   accepts the wrapper shape, a bare list, or a `{ suite: { cases } }`
   block.

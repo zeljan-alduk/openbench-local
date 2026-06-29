@@ -702,7 +702,7 @@ export function LocalModelsShell() {
             </p>
             <h2 className="mt-1 text-base font-semibold text-fg">Rate quality × speed</h2>
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-fg-muted">
-              Ninety-four cases probe instruction-following and constrained generation, JSON
+              One hundred cases probe instruction-following and constrained generation, JSON
               output, code (trace · debug · Big-O · SQL · language ID · generation), math word
               problems · probability · algebra · geometry, classic logic puzzles &amp; object
               tracking, well-known LLM gotchas (9.11 vs 9.9 · bat-and-ball · Alice's siblings ·

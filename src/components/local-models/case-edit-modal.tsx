@@ -123,6 +123,10 @@ export function CaseEditModal({
   // Author-defined "accepted, but flag it" answers. Each becomes a
   // pass-with-remark when the strict answer above doesn't match.
   const [accepts, setAccepts] = useState<AcceptDraft[]>([]);
+  // Per-case opt-in: forgive cosmetic differences (parens / markdown /
+  // LaTeX / Unicode / case) with a remark. Off by default — there is no
+  // global softener.
+  const [forgiveFormatting, setForgiveFormatting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [sampleOutput, setSampleOutput] = useState('');
@@ -150,6 +154,7 @@ export function CaseEditModal({
       setToolsSpec('');
       setShowToolsSpec(false);
       setAccepts([]);
+      setForgiveFormatting(false);
       return;
     }
     setId(initial.id);
@@ -197,6 +202,7 @@ export function CaseEditModal({
         remark: a.remark ?? '',
       })),
     );
+    setForgiveFormatting(initial.forgiveFormatting === true);
   }, [open, initial]);
 
   /**
@@ -343,11 +349,16 @@ export function CaseEditModal({
     if (!previewExpect.ok) return null;
     if (sampleOutput === '') return null;
     try {
-      return evaluateRow({ content: sampleOutput, toolCalls: [] }, previewExpect.expect, previewAccepts);
+      return evaluateRow(
+        { content: sampleOutput, toolCalls: [] },
+        previewExpect.expect,
+        previewAccepts,
+        forgiveFormatting,
+      );
     } catch (e) {
       return { passed: false, score: 0, error: e instanceof Error ? e.message : String(e) };
     }
-  }, [previewExpect, sampleOutput, previewAccepts]);
+  }, [previewExpect, sampleOutput, previewAccepts, forgiveFormatting]);
 
   /**
    * Build an InlineCase from the current form state. Returns either a
@@ -406,6 +417,7 @@ export function CaseEditModal({
         ...(previewTools.tools !== undefined ? { tools: previewTools.tools } : {}),
         ...(image !== undefined ? { image } : {}),
         ...(isTextKind && previewAccepts.length > 0 ? { acceptWithRemark: previewAccepts } : {}),
+        ...(isTextKind && forgiveFormatting ? { forgiveFormatting: true } : {}),
         // Preserve a parameterization block the structured editor doesn't
         // author. `input` / evaluator `value` stay {{var}} templates;
         // authoring the `generate` block itself is done via YAML.
@@ -615,6 +627,28 @@ export function CaseEditModal({
                     <p className="text-[11px] text-fg-muted">{evalKindHint(evalKind)}</p>
                   </div>
                 </Field>
+
+                {isTextKind ? (
+                  <label className="flex cursor-pointer items-start gap-2.5 rounded-md border border-border bg-bg-subtle/40 px-3 py-2.5">
+                    <input
+                      type="checkbox"
+                      checked={forgiveFormatting}
+                      onChange={(e) => setForgiveFormatting(e.target.checked)}
+                      className="mt-0.5 h-4 w-4 accent-accent"
+                    />
+                    <span className="flex flex-col gap-0.5">
+                      <span className="text-[12px] font-semibold text-fg">
+                        Forgive cosmetic formatting (pass with a remark)
+                      </span>
+                      <span className="text-[11px] leading-relaxed text-fg-muted">
+                        When on, an answer that differs from the value above only by enclosing
+                        punctuation, markdown, LaTeX (<code className="font-mono">\boxed{'{…}'}</code>
+                        ), Unicode form (CO₂→CO2), or letter case still passes — flagged with a
+                        remark. Off by default; this is per-case, there is no global softener.
+                      </span>
+                    </span>
+                  </label>
+                ) : null}
 
                 {isTextKind ? (
                   <Field
