@@ -88,7 +88,7 @@ export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): 
       // markdown, a different Unicode form (e.g. CO₂ → CO2), or different
       // case still passes — but with a remark so the deviation is visible.
       const norm = stripWrappers(nfkcTrim(row.content));
-      if (re.test(norm)) return softPass('enclosing punctuation, markdown, or Unicode formatting');
+      if (re.test(norm)) return softPass('enclosing punctuation, markdown, LaTeX, or Unicode formatting');
       const reCI = new RegExp(expect.value, re.flags.includes('i') ? re.flags : `${re.flags}i`);
       if (reCI.test(norm)) return softPass('letter case');
       return binary(false);
@@ -97,7 +97,7 @@ export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): 
       if (row.content.trim() === expect.value) return binary(true);
       const out = stripWrappers(nfkcTrim(row.content));
       const want = stripWrappers(nfkcTrim(expect.value));
-      if (out === want) return softPass('enclosing punctuation, markdown, or Unicode formatting');
+      if (out === want) return softPass('enclosing punctuation, markdown, LaTeX, or Unicode formatting');
       if (out.toLowerCase() === want.toLowerCase()) return softPass('letter case');
       return binary(false);
     }
@@ -193,8 +193,10 @@ function nfkcTrim(s: string): string {
 
 /**
  * Peel cosmetic wrappers a model commonly adds around a short answer:
- * markdown emphasis/code (`**B**`, `` `B` ``), and one or more layers of
- * brackets or quotes (`(B)`, `["B"]`). Only touches the ends — interior
+ * LaTeX (`\boxed{B}`, `$B$`, `\(B\)`, `\text{B}`), markdown emphasis/code
+ * (`**B**`, `` `B` ``), and one or more layers of brackets or quotes
+ * (`(B)`, `["B"]`). Reasoning/math models especially love `\boxed{…}`.
+ * Only touches the ends and unwraps a single `{…}` group — interior
  * content is left intact, so this can't turn a wrong answer into a right
  * one, only un-dress a right one.
  */
@@ -204,8 +206,17 @@ function stripWrappers(s: string): string {
   while (t !== prev) {
     prev = t;
     t = t
+      // LaTeX math delimiters: $…$, $$…$$, \(…\), \[…\]
+      .replace(/^\$+/, '')
+      .replace(/\$+$/, '')
+      .replace(/^\\[([]/, '')
+      .replace(/\\[)\]]$/, '')
+      // LaTeX answer/format macros wrapping the whole answer in {…}
+      .replace(/^\\(?:boxed|text|mathrm|mathbf|operatorname)\s*\{([\s\S]*)\}$/, '$1')
+      // Markdown emphasis / code
       .replace(/^[*_`~]+/, '')
       .replace(/[*_`~]+$/, '')
+      // Brackets and quotes
       .replace(/^[([{"'“”‘’]+/, '')
       .replace(/[)\]}"'“”‘’]+$/, '')
       .trim();
