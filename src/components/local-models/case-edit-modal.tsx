@@ -370,6 +370,10 @@ export function CaseEditModal({
         ...(requires === '' ? {} : { requires }),
         ...(previewTools.tools !== undefined ? { tools: previewTools.tools } : {}),
         ...(image !== undefined ? { image } : {}),
+        // Preserve a parameterization block the structured editor doesn't
+        // author. `input` / evaluator `value` stay {{var}} templates;
+        // authoring the `generate` block itself is done via YAML.
+        ...(initial?.generate !== undefined ? { generate: initial.generate } : {}),
       },
     };
   };
@@ -427,6 +431,18 @@ export function CaseEditModal({
                     placeholder="my-test"
                   />
                 </Field>
+
+                {initial?.generate !== undefined ? (
+                  <div className="rounded-md border border-accent/40 bg-accent/10 px-3 py-2 text-[11px] leading-relaxed text-fg-muted">
+                    <span className="font-semibold text-accent">⚙ Parameterized case.</span> The{' '}
+                    <code className="font-mono">{'{{var}}'}</code> placeholders in the prompt and
+                    evaluator value are filled from a <code className="font-mono">generate</code>{' '}
+                    block, re-sampled fresh each run. You can edit the wording here; to change the
+                    variables or answer formula, export to YAML, edit the{' '}
+                    <code className="font-mono">generate</code> block, and re-import. The block is
+                    preserved on save.
+                  </div>
+                ) : null}
 
                 <Field label="prompt" hint="exactly what the model receives as the user message">
                   <textarea

@@ -69,6 +69,33 @@ export interface InlineCase {
    * (not failed) — same plumbing as the user-pressed Skip button.
    */
   readonly requires?: 'tool_use' | 'vision';
+  /**
+   * Optional parameterization. When present, `input` and the
+   * evaluator's `value` are treated as `{{var}}` templates: the runner
+   * samples fresh variable values at the start of every run (see
+   * `case-generate.ts`) and substitutes them in. This re-randomizes the
+   * concrete question each run so a model can't pass by having
+   * memorized one fixed instance from its training data — the single
+   * biggest anti-contamination lever for famous gotchas. Authorable in
+   * plain YAML, so new parameterized cases need no code change.
+   */
+  readonly generate?: CaseGenerator;
+}
+
+/**
+ * How to sample one template variable. Evaluated in declaration order,
+ * so an `expr` var can reference earlier vars (and the helper functions
+ * `count`, `counti`, `len`, `abs`, `floor`, `ceil`, `round`, `min`,
+ * `max`, plus `Math`).
+ */
+export type VarSpec =
+  | { readonly pick: ReadonlyArray<string | number> }
+  | { readonly int: { readonly min: number; readonly max: number; readonly step?: number } }
+  | { readonly expr: string };
+
+export interface CaseGenerator {
+  /** name → how to sample it. Insertion order is the evaluation order. */
+  readonly vars: Readonly<Record<string, VarSpec>>;
 }
 
 export interface InlineSuite {
@@ -83,9 +110,9 @@ export interface InlineSuite {
 export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
   id: 'local-model-rating',
   name: 'local-model-rating',
-  version: '0.7.0',
+  version: '0.8.0',
   description:
-    'Ninety-four cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Tool-use and vision cases auto-skip on models that lack the capability.',
+    'Ninety-four cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Several cases are parameterized — their prompt and expected answer are re-randomized each run so a model cannot pass famous gotchas from memorization. Tool-use and vision cases auto-skip on models that lack the capability.',
   passThreshold: 0.6,
   cases: [
     {
@@ -195,10 +222,17 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
     {
       id: 'arithmetic-exact',
       input:
-        'Compute 17 * 23. Reply with ONLY the integer result on a single line. No prose, no commas, no equation, no units.',
+        'Compute {{a}} * {{b}}. Reply with ONLY the integer result on a single line. No prose, no commas, no equation, no units.',
+      generate: {
+        vars: {
+          a: { int: { min: 11, max: 29 } },
+          b: { int: { min: 11, max: 29 } },
+          p: { expr: 'a * b' },
+        },
+      },
       expect: {
         kind: 'regex',
-        value: '^\\s*391\\s*$',
+        value: '^\\s*{{p}}\\s*$',
       },
       weight: 1,
       tags: ['reasoning', 'arithmetic'],
@@ -206,10 +240,35 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
     {
       id: 'count-letters',
       input:
-        "How many times does the letter 'r' appear in the word 'strawberry'? Reply with ONLY the number on a single line. No prose, no explanation, no punctuation.",
+        "How many times does the letter '{{letter}}' appear in the word '{{word}}'? Reply with ONLY the number on a single line. No prose, no explanation, no punctuation.",
+      generate: {
+        vars: {
+          word: {
+            pick: [
+              'strawberry',
+              'raspberry',
+              'blueberry',
+              'blackberry',
+              'butterfly',
+              'grasshopper',
+              'watermelon',
+              'mississippi',
+              'bookkeeper',
+              'committee',
+              'tennessee',
+              'parallel',
+              'possesses',
+              'aardvark',
+              'balloon',
+            ],
+          },
+          letter: { pick: ['r', 'e', 's', 'o', 'l', 't', 'p', 'a'] },
+          n: { expr: 'counti(word, letter)' },
+        },
+      },
       expect: {
         kind: 'regex',
-        value: '^\\s*3\\s*$',
+        value: '^\\s*{{n}}\\s*$',
       },
       weight: 1,
       tags: ['reasoning', 'character-level'],
@@ -1015,16 +1074,35 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
     {
       id: 'gotcha-decimal-compare',
       input:
-        'Which is larger: 9.11 or 9.9? Reply with only the number, no commentary, no explanation.',
-      expect: { kind: 'regex', value: '^9\\.90*$' },
+        'Which is larger: {{whole}}.{{d2}} or {{whole}}.{{d1}}? Reply with only the number, no commentary, no explanation.',
+      generate: {
+        vars: {
+          whole: { int: { min: 1, max: 40 } },
+          // Paired single-digit (d1) and two-digit (d2) decimals where the
+          // single-digit tenths is the LARGER value but "looks" smaller —
+          // i.e. d1/10 > d2/100. Index-pick keeps the pairing valid.
+          idx: { pick: [0, 1, 2, 3, 4, 5] },
+          d1: { expr: '[9, 8, 7, 6, 5, 4][idx]' },
+          d2: { expr: '[11, 12, 23, 15, 41, 39][idx]' },
+        },
+      },
+      expect: { kind: 'regex', value: '^{{whole}}\\.{{d1}}0*$' },
       weight: 1,
       tags: ['reasoning', 'arithmetic', 'gotcha', 'fast'],
     },
     {
       id: 'gotcha-crt-bat-ball',
       input:
-        'A bat and a ball cost $1.10 in total. The bat costs $1.00 more than the ball. How much does the ball cost, in cents? Reply with only the integer number of cents, no commentary.',
-      expect: { kind: 'regex', value: '^5$' },
+        'A bat and a ball cost ${{total}} in total. The bat costs ${{diff}} more than the ball. How much does the ball cost, in cents? Reply with only the integer number of cents, no commentary.',
+      generate: {
+        vars: {
+          ball: { int: { min: 3, max: 20 } },
+          diffCents: { pick: [100] },
+          total: { expr: '((2 * ball + diffCents) / 100).toFixed(2)' },
+          diff: { expr: '(diffCents / 100).toFixed(2)' },
+        },
+      },
+      expect: { kind: 'regex', value: '^{{ball}}$' },
       weight: 1,
       tags: ['reasoning', 'math', 'gotcha'],
     },
@@ -1047,8 +1125,16 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
     {
       id: 'gotcha-aiw-siblings',
       input:
-        "Alice has 3 brothers and she also has 2 sisters. How many sisters does Alice's brother have? Reply with only the integer, no commentary.",
-      expect: { kind: 'regex', value: '^3$' },
+        "Alice has {{brothers}} brothers and she also has {{sisters}} sisters. How many sisters does Alice's brother have? Reply with only the integer, no commentary.",
+      generate: {
+        vars: {
+          brothers: { int: { min: 2, max: 6 } },
+          sisters: { int: { min: 1, max: 5 } },
+          // A brother's sisters = all of Alice's sisters, plus Alice herself.
+          ans: { expr: 'sisters + 1' },
+        },
+      },
+      expect: { kind: 'regex', value: '^{{ans}}$' },
       weight: 1,
       tags: ['reasoning', 'logic', 'gotcha'],
     },

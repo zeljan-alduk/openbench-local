@@ -377,6 +377,48 @@ data URLs count against the browser's ~5–10 MB origin quota; the
 2 MB-per-image cap and 200 KB-per-text cap are deliberately
 conservative for that reason. Nothing is uploaded.
 
+### Parameterized cases (anti-contamination)
+
+Famous gotchas — "how many r's in strawberry", "9.11 vs 9.9",
+bat-and-ball — are all over the public web, so a model can pass by
+having **memorized the one fixed instance** rather than reasoning. A
+case can instead carry a `generate` block: the prompt and the evaluator
+`value` become `{{var}}` templates, and the variables are **re-sampled
+fresh at the start of every run** (the same draw is shared across all
+models in a session, so comparisons stay fair). Cases with a `generate`
+block show a **⚙ param** badge in the panel.
+
+These are authored as plain data — no code — in the **Export / Import
+YAML** flow. Each variable is one of `pick` (choose from a list), `int`
+(random integer range), or `expr` (a JS expression over the earlier
+variables, with helpers `count` / `counti` / `len` / `min` / `max` /
+`Math`). Example:
+
+```yaml
+- id: count-letters
+  input: >-
+    How many times does the letter '{{letter}}' appear in the word
+    '{{word}}'? Reply with ONLY the number on a single line.
+  generate:
+    vars:
+      word:   { pick: [strawberry, mississippi, balloon, committee] }
+      letter: { pick: [r, s, l, e, t] }
+      n:      { expr: "counti(word, letter)" }   # the derived answer
+  expect:
+    kind: regex
+    value: '^\s*{{n}}\s*$'
+  weight: 1
+  tags: [reasoning, character-level]
+```
+
+The shipped suite includes five worked examples to copy from:
+`count-letters`, `arithmetic-exact`, `gotcha-crt-bat-ball`,
+`gotcha-aiw-siblings`, and `gotcha-decimal-compare`. Authoring errors
+(an empty `pick`, a non-numeric `int`) are caught on import; a bad
+`expr` falls back to running the template as-is rather than crashing the
+run. Substitute derived **numbers** into `regex` values — a raw word
+with regex metacharacters won't be escaped for you.
+
 ## Theme
 
 Top-right pill toggles between **light**, **system** (follows

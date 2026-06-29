@@ -2,6 +2,7 @@ import * as Switch from '@radix-ui/react-switch';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { InlineCase } from './builtin-suite';
 import { CaseEditModal } from './case-edit-modal';
+import { isParameterized } from './case-generate';
 import { type CaseSource, useCaseStore } from './case-store';
 import { decodeCasesYaml, encodeCasesYaml } from './cases-yaml';
 
@@ -436,6 +437,14 @@ function CaseRow({
           {c.requires !== undefined ? (
             <span className="rounded-full bg-amber-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-amber-700 dark:text-amber-400">
               needs {c.requires}
+            </span>
+          ) : null}
+          {isParameterized(c) ? (
+            <span
+              className="rounded-full bg-accent/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-accent"
+              title="Parameterized — re-randomized each run to resist memorization. Authorable via the generate block in exported YAML."
+            >
+              ⚙ param
             </span>
           ) : null}
           {c.tags.map((t) => {

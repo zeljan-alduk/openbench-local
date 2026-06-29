@@ -94,5 +94,44 @@ function validateShape(cases: readonly InlineCase[]): void {
     if (!Array.isArray(c.tags)) {
       throw new Error(`Case "${c.id}": \`tags\` must be an array of strings.`);
     }
+    if (c.generate !== undefined) validateGenerate(c.id, c.generate);
+  }
+}
+
+/**
+ * Light shape-check for a parameterization block. We don't evaluate the
+ * `expr` strings here (that happens at run time, where errors fall back
+ * gracefully) — we just make sure `vars` is a map of recognised specs so
+ * an obvious typo in a shared YAML fails loudly at import.
+ */
+function validateGenerate(caseId: string, generate: unknown): void {
+  if (generate === null || typeof generate !== 'object') {
+    throw new Error(`Case "${caseId}": \`generate\` must be an object with a \`vars\` map.`);
+  }
+  const vars = (generate as { vars?: unknown }).vars;
+  if (vars === null || typeof vars !== 'object' || Array.isArray(vars)) {
+    throw new Error(`Case "${caseId}": \`generate.vars\` must be a map of variable specs.`);
+  }
+  for (const [name, spec] of Object.entries(vars as Record<string, unknown>)) {
+    if (spec === null || typeof spec !== 'object') {
+      throw new Error(`Case "${caseId}": var "${name}" must be an object.`);
+    }
+    const s = spec as Record<string, unknown>;
+    const hasOne = 'pick' in s || 'int' in s || 'expr' in s;
+    if (!hasOne) {
+      throw new Error(`Case "${caseId}": var "${name}" needs one of \`pick\`, \`int\`, or \`expr\`.`);
+    }
+    if ('pick' in s && (!Array.isArray(s.pick) || s.pick.length === 0)) {
+      throw new Error(`Case "${caseId}": var "${name}" \`pick\` must be a non-empty array.`);
+    }
+    if ('int' in s) {
+      const r = s.int as { min?: unknown; max?: unknown };
+      if (typeof r?.min !== 'number' || typeof r?.max !== 'number') {
+        throw new Error(`Case "${caseId}": var "${name}" \`int\` needs numeric \`min\` and \`max\`.`);
+      }
+    }
+    if ('expr' in s && typeof s.expr !== 'string') {
+      throw new Error(`Case "${caseId}": var "${name}" \`expr\` must be a string.`);
+    }
   }
 }

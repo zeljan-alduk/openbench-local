@@ -36,6 +36,7 @@ import {
 } from './bench-direct';
 import { LOCAL_MODEL_RATING_SUITE } from './builtin-suite';
 import { inferCapabilities } from './capabilities';
+import { materializeCase, materializeCases } from './case-generate';
 import { useCaseStore } from './case-store';
 import { CasesPanel } from './cases-panel';
 import { CorsHelpPanel } from './cors-help-panel';
@@ -219,6 +220,16 @@ export function LocalModelsShell() {
       return { model: m, runId: newId(), runConfig: effective };
     });
 
+    // Materialize parameterized cases ONCE per Start. Every model in this
+    // session is then scored on the SAME freshly-randomized instances —
+    // fair cross-model comparison, and a fresh draw each run so a model
+    // can't pass famous gotchas from memorization. Plain cases pass
+    // through untouched.
+    const sessionSuite = {
+      ...effectiveSuite,
+      cases: materializeCases(effectiveSuite.cases),
+    };
+
     // Append (not replace) — older runs stay visible above the new
     // ones. Index of the first newly-appended entry is `appendBase`;
     // we use it inside the loop to address the right slot.
@@ -280,7 +291,7 @@ export function LocalModelsShell() {
         try {
           const caps = inferCapabilities(m.id);
           const res = await runBenchDirect({
-            suite: effectiveSuite,
+            suite: sessionSuite,
             modelId: m.id,
             chatBaseUrl: m.chatBaseUrl,
             signal: ac.signal,
@@ -325,7 +336,7 @@ export function LocalModelsShell() {
             onCase: (row) => {
               accumulated.push(row);
               const snapshot = [...accumulated];
-              const summary = summariseWithSuite(snapshot, effectiveSuite);
+              const summary = summariseWithSuite(snapshot, sessionSuite);
               setRuns((prev) =>
                 prev.map((r, i) =>
                   i === slot ? { ...r, rows: snapshot, summary, inFlight: null } : r,
@@ -469,7 +480,8 @@ export function LocalModelsShell() {
       }
       try {
         const fresh = await runSingleCase({
-          case: c,
+          // Re-sample a fresh instance for parameterized cases on retry.
+          case: materializeCase(c),
           modelId: target.model.id,
           chatBaseUrl: target.model.chatBaseUrl,
           runConfig: mergeRunConfig(runConfigEnabled ? runConfig : {}, getPerModel(modelKeyTarget)),
