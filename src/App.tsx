@@ -1,5 +1,6 @@
 import { BuyMeCoffee } from './components/buy-me-coffee';
 import { LocalModelsShell } from './components/local-models/local-models-shell';
+import { SystemInfoPanel } from './components/local-models/system-info-panel';
 import { StorageNotice } from './components/storage-notice';
 import { ThemeToggle } from './components/theme-toggle';
 
@@ -48,6 +49,10 @@ export function App() {
 
         <div className="mt-10">
           <LocalModelsShell />
+        </div>
+
+        <div className="mt-8">
+          <SystemInfoPanel />
         </div>
 
         <footer className="mt-12 border-t border-border pt-6 text-center text-xs text-fg-muted print:hidden">
