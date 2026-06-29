@@ -79,10 +79,15 @@ function compactLine(i: SystemInfo): string {
 
 function gpuShort(gpu: string | null): string | null {
   if (gpu === null) return null;
-  // Trim the verbose "ANGLE (Vendor, Renderer Direct3D11 …)" wrapper Chrome
-  // emits on Windows down to the renderer name in the middle.
-  const angle = gpu.match(/ANGLE \([^,]+,\s*([^,(]+)/);
-  const name = (angle?.[1] ?? gpu).trim();
+  // Chrome wraps the real GPU name in ANGLE noise that differs per OS:
+  //   Windows: "ANGLE (NVIDIA, NVIDIA GeForce RTX 4090 Direct3D11 …)"
+  //   macOS:   "ANGLE (Apple, ANGLE Metal Renderer: Apple M4 Pro, …)"
+  // Peel the wrapper, then drop a leading "… Renderer:" label.
+  const inner = gpu.match(/ANGLE \([^,]+,\s*([^,(]+)/)?.[1] ?? gpu;
+  const name = inner
+    .replace(/^ANGLE\b.*?Renderer:\s*/i, '')
+    .replace(/\s+Direct3D11.*$/i, '')
+    .trim();
   return name.length > 42 ? `${name.slice(0, 40)}…` : name;
 }
 
