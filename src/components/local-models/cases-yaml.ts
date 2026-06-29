@@ -95,6 +95,31 @@ function validateShape(cases: readonly InlineCase[]): void {
       throw new Error(`Case "${c.id}": \`tags\` must be an array of strings.`);
     }
     if (c.generate !== undefined) validateGenerate(c.id, c.generate);
+    if (c.acceptWithRemark !== undefined) validateAccept(c.id, c.acceptWithRemark);
+  }
+}
+
+/** Shape-check the `acceptWithRemark` list (pass-with-remark alternatives). */
+function validateAccept(caseId: string, accept: unknown): void {
+  if (!Array.isArray(accept)) {
+    throw new Error(`Case "${caseId}": \`acceptWithRemark\` must be an array.`);
+  }
+  for (const a of accept as unknown[]) {
+    if (a === null || typeof a !== 'object') {
+      throw new Error(`Case "${caseId}": each \`acceptWithRemark\` entry must be an object.`);
+    }
+    const clause = a as Record<string, unknown>;
+    if (clause.kind !== 'contains' && clause.kind !== 'regex' && clause.kind !== 'exact') {
+      throw new Error(
+        `Case "${caseId}": \`acceptWithRemark\` kind must be one of contains | regex | exact.`,
+      );
+    }
+    if (typeof clause.value !== 'string' || clause.value === '') {
+      throw new Error(`Case "${caseId}": \`acceptWithRemark\` entry needs a non-empty \`value\`.`);
+    }
+    if (clause.remark !== undefined && typeof clause.remark !== 'string') {
+      throw new Error(`Case "${caseId}": \`acceptWithRemark\` \`remark\` must be a string.`);
+    }
   }
 }
 

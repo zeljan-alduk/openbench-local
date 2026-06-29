@@ -482,7 +482,11 @@ async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
   }
   const totalMs = performance.now() - start;
   const toolCalls = freezeToolCalls(captured.toolCalls);
-  const evalResult: EvalOutcome = evaluateRow({ content: captured.content, toolCalls }, c.expect);
+  const evalResult: EvalOutcome = evaluateRow(
+    { content: captured.content, toolCalls },
+    c.expect,
+    c.acceptWithRemark,
+  );
   const reasoningRatio =
     captured.tokensReasoning !== null && captured.tokensOut !== null && captured.tokensOut > 0
       ? captured.tokensReasoning / captured.tokensOut

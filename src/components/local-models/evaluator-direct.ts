@@ -15,7 +15,7 @@
  * browser without server-only deps.
  */
 
-import type { InlineCase } from './builtin-suite';
+import type { AcceptClause, InlineCase } from './builtin-suite';
 
 export interface EvalOutcome {
   readonly passed: boolean;
@@ -48,11 +48,39 @@ export interface EvalRowContext {
 }
 
 /**
- * Evaluate a captured row against the case's `expect` clause. The
- * row carries both the streamed `content` (for text-based evaluator
- * kinds) and the captured `toolCalls` (for the `tool_call` kind).
+ * Evaluate a captured row against the case's `expect` clause, plus any
+ * author-defined `acceptWithRemark` alternatives.
+ *
+ * The strict `expect` is the canonical correct answer (clean pass). If
+ * it fails — even after cosmetic normalization — we try each accept
+ * clause in order; the first match is a pass-with-remark carrying that
+ * clause's note. This lets the case author decide what's fully-correct
+ * vs. merely-acceptable, without loosening the verifier globally.
  */
-export function evaluateRow(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome {
+export function evaluateRow(
+  row: EvalRowContext,
+  expect: InlineCase['expect'],
+  acceptWithRemark?: readonly AcceptClause[],
+): EvalOutcome {
+  const primary = evalOne(row, expect);
+  if (primary.passed || acceptWithRemark === undefined || acceptWithRemark.length === 0) {
+    return primary;
+  }
+  for (const clause of acceptWithRemark) {
+    if (evalOne(row, { kind: clause.kind, value: clause.value }).passed) {
+      return {
+        passed: true,
+        score: 1,
+        remark: clause.remark?.trim() ? clause.remark.trim() : 'Accepted alternative answer.',
+      };
+    }
+  }
+  // No alternative matched either — return the canonical failure (with its detail).
+  return primary;
+}
+
+/** Match a row against a single evaluator clause (strict + cosmetic soft-pass). */
+function evalOne(row: EvalRowContext, expect: InlineCase['expect']): EvalOutcome {
   switch (expect.kind) {
     case 'contains': {
       if (row.content.includes(expect.value)) return binary(true);

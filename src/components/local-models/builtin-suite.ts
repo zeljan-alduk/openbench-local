@@ -53,6 +53,18 @@ export interface InlineCase {
   readonly weight: number;
   readonly tags: readonly string[];
   /**
+   * Author-defined "accepted, but flag it" answers. The `expect` clause
+   * above is the canonical correct answer (a clean pass). Each clause
+   * here is an ADDITIONAL answer that should still pass — but as a
+   * pass-with-remark, so the deviation stays visible. Tried in order
+   * only after `expect` (and its cosmetic normalization) fails; the
+   * first match wins and its `remark` is shown. Lets the case author
+   * decide exactly what counts as fully-correct vs. acceptable, instead
+   * of loosening the verifier globally. Values are `{{var}}` templates
+   * too, so they work with `generate`.
+   */
+  readonly acceptWithRemark?: readonly AcceptClause[];
+  /**
    * When set, sent as the `tools` field on the chat completion
    * request. Triggers native tool-calling behaviour.
    */
@@ -96,6 +108,18 @@ export type VarSpec =
 export interface CaseGenerator {
   /** name → how to sample it. Insertion order is the evaluation order. */
   readonly vars: Readonly<Record<string, VarSpec>>;
+}
+
+/**
+ * One "accept this too, but with a remark" rule. Same text-matching
+ * kinds as the strict evaluator. `remark` is the human-readable note
+ * shown on the resulting soft pass (a sensible default is used if
+ * omitted).
+ */
+export interface AcceptClause {
+  readonly kind: 'contains' | 'regex' | 'exact';
+  readonly value: string;
+  readonly remark?: string;
 }
 
 export interface InlineSuite {
@@ -925,10 +949,20 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       id: 'commonsense-ice-water',
       input:
         'You drop a normal ice cube into a glass of room-temperature water. What happens immediately? Reply with only the letter.\n(A) it sinks to the bottom\n(B) it floats on top\n(C) it dissolves instantly\n(D) it evaporates',
-      // Strict "B"; a model that echoes the prompt's "(B)" label still
-      // passes via the evaluator's soft-pass normalization, flagged as a
-      // remark rather than silently accepted.
+      // Strict "B"; a model that echoes the prompt's "(B)" label or wraps
+      // it in LaTeX still passes via the evaluator's cosmetic soft-pass
+      // normalization. The accept clause below additionally forgives a
+      // model that *describes* the answer ("it floats…") instead of
+      // replying with just the letter — a content-level alternative the
+      // cosmetic layer can't see.
       expect: { kind: 'regex', value: '^B$' },
+      acceptWithRemark: [
+        {
+          kind: 'contains',
+          value: 'float',
+          remark: 'described the outcome in words instead of replying with just the letter B',
+        },
+      ],
       weight: 1,
       tags: ['commonsense', 'reasoning', 'fast'],
     },
@@ -945,8 +979,17 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       input:
         'What gas do plants absorb from the air during photosynthesis? Reply with only the chemical formula (e.g. CO2, H2O, O2). No commentary.',
       // Strict "CO2"; the subscript rendering "CO₂" still passes via the
-      // evaluator's Unicode (NFKC) soft-pass normalization, with a remark.
+      // evaluator's Unicode (NFKC) soft-pass normalization. The accept
+      // clause forgives a model that spells the gas out in words instead
+      // of giving the formula the prompt asked for.
       expect: { kind: 'regex', value: '^CO2$' },
+      acceptWithRemark: [
+        {
+          kind: 'contains',
+          value: 'carbon dioxide',
+          remark: 'named the gas in words instead of giving the chemical formula CO2',
+        },
+      ],
       weight: 1,
       tags: ['science', 'fact', 'fast'],
     },

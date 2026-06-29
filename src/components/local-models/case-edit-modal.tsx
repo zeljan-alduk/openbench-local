@@ -1,7 +1,10 @@
 import * as Dialog from '@radix-ui/react-dialog';
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { InlineCase, ToolSpec } from './builtin-suite';
-import { evaluateOutput } from './evaluator-direct';
+import type { AcceptClause, InlineCase, ToolSpec } from './builtin-suite';
+import { evaluateRow } from './evaluator-direct';
+
+/** Editable draft of one accept-with-remark clause (string-typed value). */
+type AcceptDraft = { kind: AcceptClause['kind']; value: string; remark: string };
 
 /**
  * Eval-case editor.
@@ -117,6 +120,9 @@ export function CaseEditModal({
   // *after* a tool round-trip).
   const [toolsSpec, setToolsSpec] = useState('');
   const [showToolsSpec, setShowToolsSpec] = useState(false);
+  // Author-defined "accepted, but flag it" answers. Each becomes a
+  // pass-with-remark when the strict answer above doesn't match.
+  const [accepts, setAccepts] = useState<AcceptDraft[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [attachError, setAttachError] = useState<string | null>(null);
   const [sampleOutput, setSampleOutput] = useState('');
@@ -143,6 +149,7 @@ export function CaseEditModal({
       setImageName('');
       setToolsSpec('');
       setShowToolsSpec(false);
+      setAccepts([]);
       return;
     }
     setId(initial.id);
@@ -183,6 +190,13 @@ export function CaseEditModal({
       setToolsSpec('');
       setShowToolsSpec(false);
     }
+    setAccepts(
+      (initial.acceptWithRemark ?? []).map((a) => ({
+        kind: a.kind,
+        value: a.value,
+        remark: a.remark ?? '',
+      })),
+    );
   }, [open, initial]);
 
   /**
@@ -304,15 +318,36 @@ export function CaseEditModal({
     }
   }, [showToolsSpec, toolsSpec]);
 
+  // Cleaned accept clauses (drop blank-value rows) — used by both the
+  // live preview and the saved case.
+  const previewAccepts = useMemo<readonly AcceptClause[]>(
+    () =>
+      accepts
+        .filter((a) => a.value.trim() !== '')
+        .map((a) => ({
+          kind: a.kind,
+          value: a.value,
+          ...(a.remark.trim() !== '' ? { remark: a.remark.trim() } : {}),
+        })),
+    [accepts],
+  );
+
+  // accept-with-remark only applies to the text evaluator kinds.
+  const isTextKind =
+    evalKind === 'contains' ||
+    evalKind === 'not_contains' ||
+    evalKind === 'regex' ||
+    evalKind === 'exact';
+
   const liveOutcome = useMemo(() => {
     if (!previewExpect.ok) return null;
     if (sampleOutput === '') return null;
     try {
-      return evaluateOutput(sampleOutput, previewExpect.expect);
+      return evaluateRow({ content: sampleOutput, toolCalls: [] }, previewExpect.expect, previewAccepts);
     } catch (e) {
       return { passed: false, score: 0, error: e instanceof Error ? e.message : String(e) };
     }
-  }, [previewExpect, sampleOutput]);
+  }, [previewExpect, sampleOutput, previewAccepts]);
 
   /**
    * Build an InlineCase from the current form state. Returns either a
@@ -370,6 +405,7 @@ export function CaseEditModal({
         ...(requires === '' ? {} : { requires }),
         ...(previewTools.tools !== undefined ? { tools: previewTools.tools } : {}),
         ...(image !== undefined ? { image } : {}),
+        ...(isTextKind && previewAccepts.length > 0 ? { acceptWithRemark: previewAccepts } : {}),
         // Preserve a parameterization block the structured editor doesn't
         // author. `input` / evaluator `value` stay {{var}} templates;
         // authoring the `generate` block itself is done via YAML.
@@ -579,6 +615,91 @@ export function CaseEditModal({
                     <p className="text-[11px] text-fg-muted">{evalKindHint(evalKind)}</p>
                   </div>
                 </Field>
+
+                {isTextKind ? (
+                  <Field
+                    label="accepted answers (pass with a remark)"
+                    hint="optional — answers that aren't the canonical one but should still pass, each flagged with a note instead of a clean pass"
+                  >
+                    <div className="flex flex-col gap-2">
+                      {accepts.length === 0 ? (
+                        <p className="text-[11px] text-fg-faint">
+                          None — the strict answer above is the only clean pass. Add an entry to
+                          accept a variant (e.g. a spelled-out name, an alternate phrasing) with a
+                          remark.
+                        </p>
+                      ) : null}
+                      {accepts.map((a, i) => (
+                        // biome-ignore lint/suspicious/noArrayIndexKey: rows are positional and have no stable id
+                        <div
+                          key={i}
+                          className="flex flex-col gap-1.5 rounded-md border border-border bg-bg-subtle/40 p-2"
+                        >
+                          <div className="flex items-center gap-2">
+                            <select
+                              value={a.kind}
+                              onChange={(e) =>
+                                setAccepts((prev) =>
+                                  prev.map((x, j) =>
+                                    j === i
+                                      ? { ...x, kind: e.target.value as AcceptDraft['kind'] }
+                                      : x,
+                                  ),
+                                )
+                              }
+                              className="rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] text-fg"
+                            >
+                              <option value="contains">contains</option>
+                              <option value="regex">regex</option>
+                              <option value="exact">exact</option>
+                            </select>
+                            <input
+                              type="text"
+                              value={a.value}
+                              onChange={(e) =>
+                                setAccepts((prev) =>
+                                  prev.map((x, j) => (j === i ? { ...x, value: e.target.value } : x)),
+                                )
+                              }
+                              spellCheck={false}
+                              placeholder="accepted value (e.g. carbon dioxide)"
+                              className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1.5 font-mono text-[12px] text-fg"
+                            />
+                            <button
+                              type="button"
+                              onClick={() => setAccepts((prev) => prev.filter((_, j) => j !== i))}
+                              aria-label="Remove accepted answer"
+                              className="rounded-md px-2 py-1 text-[12px] text-fg-muted hover:bg-bg-subtle hover:text-fg"
+                            >
+                              ✕
+                            </button>
+                          </div>
+                          <input
+                            type="text"
+                            value={a.remark}
+                            onChange={(e) =>
+                              setAccepts((prev) =>
+                                prev.map((x, j) => (j === i ? { ...x, remark: e.target.value } : x)),
+                              )
+                            }
+                            spellCheck={false}
+                            placeholder="remark shown on the pass (optional)"
+                            className="w-full rounded-md border border-border bg-bg px-2 py-1.5 text-[12px] text-fg"
+                          />
+                        </div>
+                      ))}
+                      <button
+                        type="button"
+                        onClick={() =>
+                          setAccepts((prev) => [...prev, { kind: 'contains', value: '', remark: '' }])
+                        }
+                        className="self-start rounded-md border border-border px-2.5 py-1 text-[12px] text-fg-muted hover:bg-bg-subtle hover:text-fg"
+                      >
+                        + Add accepted answer
+                      </button>
+                    </div>
+                  </Field>
+                ) : null}
 
                 <details
                   open={showToolsSpec}
@@ -793,6 +914,7 @@ function CardPreview({
 interface MaybeOutcome {
   readonly passed: boolean;
   readonly score: number;
+  readonly remark?: string;
   readonly error?: string;
 }
 
@@ -825,21 +947,25 @@ function OutcomeChip({
       </div>
     );
   }
+  const isRemark = outcome.passed && outcome.remark !== undefined;
   return (
-    <div className="mt-2 flex items-center gap-2">
+    <div className="mt-2 flex flex-wrap items-center gap-2">
       <span
         className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-[12px] font-semibold ${
-          outcome.passed
-            ? 'bg-success/15 text-success'
-            : 'bg-danger/15 text-danger'
+          isRemark
+            ? 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+            : outcome.passed
+              ? 'bg-success/15 text-success'
+              : 'bg-danger/15 text-danger'
         }`}
       >
         <span aria-hidden>{outcome.passed ? '✓' : '✕'}</span>
-        <span>{outcome.passed ? 'PASS' : 'FAIL'}</span>
+        <span>{isRemark ? 'PASS · remark' : outcome.passed ? 'PASS' : 'FAIL'}</span>
       </span>
-      <span className="font-mono text-[11px] text-fg-muted">
-        score {outcome.score.toFixed(2)}
-      </span>
+      <span className="font-mono text-[11px] text-fg-muted">score {outcome.score.toFixed(2)}</span>
+      {isRemark ? (
+        <span className="text-[11px] text-amber-700 dark:text-amber-400">{outcome.remark}</span>
+      ) : null}
     </div>
   );
 }

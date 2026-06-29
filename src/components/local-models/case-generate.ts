@@ -111,7 +111,19 @@ export function materializeCase(c: InlineCase): InlineCase {
     const vars = sampleVars(c.generate);
     const { generate: _generate, ...rest } = c;
     void _generate;
-    return { ...rest, input: fillTemplate(c.input, vars), expect: fillExpect(c.expect, vars) };
+    return {
+      ...rest,
+      input: fillTemplate(c.input, vars),
+      expect: fillExpect(c.expect, vars),
+      ...(c.acceptWithRemark !== undefined
+        ? {
+            acceptWithRemark: c.acceptWithRemark.map((a) => ({
+              ...a,
+              value: fillTemplate(a.value, vars),
+            })),
+          }
+        : {}),
+    };
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn(`case "${c.id}": could not materialize generate block — running template as-is.`, e);
