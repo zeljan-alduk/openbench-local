@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <link rel="icon" type="image/svg+xml" href="./favicon.svg" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>openbench-local — scan & rate local LLMs in your browser</title>
+    <meta
+      name="description"
+      content="Discover every local LLM running on your machine and rate it on quality + speed. Runs entirely in your browser. No signup. Nothing leaves localhost."
+    />
+    <meta property="og:title" content="openbench-local" />
+    <meta
+      property="og:description"
+      content="Scan local LLMs and rate them on quality × speed. Runs entirely in your browser."
+    />
+    <script>
+      // Apply the persisted theme before React mounts so the page paints
+      // with the right colours on the first frame (no flash-of-wrong-theme).
+      // Mirrors the logic in src/components/theme-toggle.tsx.
+      (function () {
+        try {
+          var t = localStorage.getItem('openbench-local:theme');
+          if (t === 'light' || t === 'dark') {
+            document.documentElement.classList.add(t);
+          }
+        } catch (e) {
+          /* private mode — silently fall back to system preference */
+        }
+      })();
+    </script>
+    <script type="module" crossorigin src="./assets/index-Dr2lilZC.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-BkNoVYmz.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
