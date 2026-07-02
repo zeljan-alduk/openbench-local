@@ -28,6 +28,7 @@
  */
 
 import { readApiKey } from './auth-store';
+import type { ModelEngineMeta } from './capabilities';
 
 export type DiscoverySource = 'ollama' | 'lmstudio' | 'vllm' | 'llamacpp';
 
@@ -43,6 +44,14 @@ export interface DiscoveredLocalModel {
   readonly capability: string;
   /** Optional context-window hint when the server reports it. */
   readonly contextTokens?: number;
+  /**
+   * Engine-truth metadata (capabilities, quant, arch). Populated by a
+   * best-effort post-scan enrichment pass (engine-metadata.ts); absent
+   * on vLLM, on fetch failure, and on model objects hydrated from
+   * pre-meta stored runs. `scan.models` is the authoritative carrier —
+   * `probes[*].models` may hold un-enriched twins.
+   */
+  readonly meta?: ModelEngineMeta;
 }
 
 export interface DiscoveryProbeResult {

@@ -17,6 +17,7 @@
  */
 
 import type { RunConfig } from './bench-direct';
+import type { RunMeta } from './history-store';
 import type { ModelRunState } from './multi-bench-panel';
 import { mergeRunConfig } from './per-model-config';
 import { modelKey } from './selection';
@@ -28,7 +29,8 @@ import { modelKey } from './selection';
  * effective merged config (global wins when enabled, else per-model).
  */
 export interface ExportContext {
-  readonly runs: readonly ModelRunState[];
+  /** In-memory run states; the shell's carry RunMeta identity fields too. */
+  readonly runs: readonly (ModelRunState & Partial<RunMeta>)[];
   readonly globalConfig: RunConfig;
   readonly globalEnabled: boolean;
   readonly perModel: Readonly<Record<string, RunConfig>>;
@@ -54,6 +56,13 @@ export function downloadJson(ctx: ExportContext): void {
       const key = modelKey(r.model);
       const perModel = ctx.perModel[key] ?? null;
       return {
+        // Run identity, when the caller carries it — makes the report
+        // JSON traceable back to history records (the report itself is
+        // still a human dump; re-import uses "Export runs" in History).
+        ...(r.runId !== undefined ? { runId: r.runId } : {}),
+        ...(r.sessionId !== undefined ? { sessionId: r.sessionId } : {}),
+        ...(r.startedAt !== undefined ? { startedAt: r.startedAt } : {}),
+        ...(r.finishedAt !== undefined && r.finishedAt !== null ? { finishedAt: r.finishedAt } : {}),
         model: r.model,
         phase: r.phase,
         warmUp: r.warmUp,

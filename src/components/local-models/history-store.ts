@@ -22,14 +22,27 @@ import type { DiscoveredLocalModel } from './discovery-direct';
 import type { InFlightCase, ModelRunState, RunPhase } from './multi-bench-panel';
 
 const DB_NAME = 'openbench-local';
-const DB_VERSION = 1;
+// v2: adds the `modelId` index (trend/pooling queries by model) and
+// the optional schema-v2 record fields below. v1 records need no
+// rewrite — every new field is optional and reads are funnelled
+// through `normalizeStoredRun`.
+const DB_VERSION = 2;
 const STORE_RUNS = 'runs';
 const INDEX_SESSION = 'sessionId';
 const INDEX_FINISHED_AT = 'finishedAt';
+const INDEX_MODEL_ID = 'modelId';
+
+/** Where a stored run came from — local bench, imported file, or opened share link. */
+export type RunOrigin = 'local' | 'imported' | 'shared-link';
 
 /**
  * The on-disk shape. Mirrors ModelRunState but with run identity +
  * captured config and a serialised summary (byTag Map → entry list).
+ *
+ * Schema v2 fields are all optional: records written by v1 builds
+ * stay valid on disk and hydrate with `normalizeStoredRun` defaults.
+ * Engine metadata (quantization/arch/capabilities) is NOT duplicated
+ * here — it rides along inside `model.meta` (see capabilities.ts).
  */
 export interface StoredRun {
   readonly runId: string;
@@ -43,9 +56,24 @@ export interface StoredRun {
   readonly error: string | null;
   readonly warmUp: ModelRunState['warmUp'];
   readonly runConfig: RunConfig;
+  /** 2 for records written by this build; absent on legacy records. */
+  readonly schemaVersion?: 2;
+  /** InlineSuite.version at run time — pooling gates on it. */
+  readonly suiteVersion?: string;
+  /** App version that produced the record (vite define from package.json). */
+  readonly appVersion?: string;
+  /**
+   * Sampled `generate` var bindings for this run's materialization,
+   * keyed by case id. Lets a surprising result be traced to the exact
+   * drawn instance. Per-run (not per-row): one draw per Start click.
+   */
+  readonly generatedVars?: Readonly<Record<string, Readonly<Record<string, string | number>>>>;
+  readonly origin?: RunOrigin;
+  /** Original runId when this record was imported and had to be re-keyed. */
+  readonly importedRunId?: string;
 }
 
-interface SerialisedSummary {
+export interface SerialisedSummary {
   readonly passed: number;
   readonly total: number;
   readonly passRate: number;
@@ -56,6 +84,13 @@ interface SerialisedSummary {
 }
 
 let dbPromise: Promise<IDBDatabase> | null = null;
+
+/**
+ * Set when another tab holding the v1 database blocks our v2 upgrade.
+ * The UI can poll this to tell the user to close other openbench tabs
+ * instead of hanging silently.
+ */
+export let upgradeBlocked = false;
 
 function openDb(): Promise<IDBDatabase> {
   if (typeof window === 'undefined' || !('indexedDB' in window)) {
@@ -70,9 +105,28 @@ function openDb(): Promise<IDBDatabase> {
         const store = db.createObjectStore(STORE_RUNS, { keyPath: 'runId' });
         store.createIndex(INDEX_SESSION, 'sessionId', { unique: false });
         store.createIndex(INDEX_FINISHED_AT, 'finishedAt', { unique: false });
+        store.createIndex(INDEX_MODEL_ID, 'model.id', { unique: false });
+      } else {
+        // v1 → v2: add the model-id index; existing records untouched.
+        const store = req.transaction?.objectStore(STORE_RUNS);
+        if (store !== undefined && !store.indexNames.contains(INDEX_MODEL_ID)) {
+          store.createIndex(INDEX_MODEL_ID, 'model.id', { unique: false });
+        }
       }
     };
-    req.onsuccess = () => resolve(req.result);
+    req.onblocked = () => {
+      upgradeBlocked = true;
+    };
+    req.onsuccess = () => {
+      upgradeBlocked = false;
+      // If a newer build in another tab needs to upgrade, release our
+      // connection so it isn't blocked forever.
+      req.result.onversionchange = () => {
+        req.result.close();
+        dbPromise = null;
+      };
+      resolve(req.result);
+    };
     req.onerror = () => reject(req.error ?? new Error('IDB open failed'));
   });
   return dbPromise;
@@ -133,17 +187,32 @@ function slimRows(rows: readonly BenchCaseRow[]): BenchCaseRow[] {
  * Persist one finished model run. Caller is responsible for not
  * calling this before phase reaches done/stopped/error — we don't
  * want partial in-flight rows in the history.
+ *
+ * Returns whether the write actually landed. Bench-path callers
+ * ignore it (persistence is best-effort there); the import flow
+ * checks it so "Imported N runs" never lies about a quota failure.
  */
-export async function putRun(run: StoredRun): Promise<void> {
+export async function putRun(run: StoredRun): Promise<boolean> {
   try {
     const db = await openDb();
     const { store, done } = tx(db, 'readwrite');
     store.put({ ...run, rows: slimRows(run.rows) });
     await done;
+    return true;
   } catch {
     // Persistence is best-effort. Quota exceeded / private mode /
     // browser bug — keep the in-memory copy and move on.
+    return false;
   }
+}
+
+/** Fill v2 defaults onto records written by any older build. */
+export function normalizeStoredRun(raw: StoredRun): StoredRun {
+  if (raw.schemaVersion === 2) return raw;
+  return {
+    ...raw,
+    origin: raw.origin ?? 'local',
+  };
 }
 
 export async function getAllRuns(): Promise<StoredRun[]> {
@@ -151,7 +220,7 @@ export async function getAllRuns(): Promise<StoredRun[]> {
     const db = await openDb();
     const { store } = tx(db, 'readonly');
     const all = await req(store.getAll());
-    return all as StoredRun[];
+    return (all as StoredRun[]).map(normalizeStoredRun);
   } catch {
     return [];
   }
@@ -210,6 +279,7 @@ export function storedToRunState(s: StoredRun): ModelRunState & RunMeta {
     startedAt: s.startedAt,
     finishedAt: s.finishedAt,
     runConfig: s.runConfig,
+    ...(s.origin !== undefined ? { origin: s.origin } : {}),
   };
 }
 
@@ -224,6 +294,8 @@ export interface RunMeta {
   readonly startedAt: number;
   readonly finishedAt: number | null;
   readonly runConfig: RunConfig;
+  /** Absent for pre-v2 in-memory states; 'local' is the default meaning. */
+  readonly origin?: RunOrigin;
 }
 
 /**

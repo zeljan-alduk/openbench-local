@@ -99,6 +99,95 @@ function validateShape(cases: readonly InlineCase[]): void {
     if (c.forgiveFormatting !== undefined && typeof c.forgiveFormatting !== 'boolean') {
       throw new Error(`Case "${c.id}": \`forgiveFormatting\` must be a boolean.`);
     }
+    if (c.followUps !== undefined) validateFollowUps(c.id, c.followUps);
+    if (c.toolResponders !== undefined) validateToolResponders(c.id, c.toolResponders);
+    if (c.sweep !== undefined) validateSweep(c.id, c.sweep);
+    if (c.maxToolRounds !== undefined) {
+      if (
+        typeof c.maxToolRounds !== 'number' ||
+        !Number.isInteger(c.maxToolRounds) ||
+        c.maxToolRounds < 1
+      ) {
+        throw new Error(`Case "${c.id}": \`maxToolRounds\` must be a positive integer.`);
+      }
+    }
+  }
+}
+
+/** Shape-check a context-sweep block. */
+function validateSweep(caseId: string, sweep: unknown): void {
+  if (sweep === null || typeof sweep !== 'object') {
+    throw new Error(`Case "${caseId}": \`sweep\` must be an object.`);
+  }
+  const s = sweep as Record<string, unknown>;
+  if (s.kind !== 'context') {
+    throw new Error(`Case "${caseId}": \`sweep.kind\` must be 'context'.`);
+  }
+  if (
+    !Array.isArray(s.sizes) ||
+    s.sizes.length === 0 ||
+    !s.sizes.every((n) => typeof n === 'number' && Number.isFinite(n) && n > 0)
+  ) {
+    throw new Error(`Case "${caseId}": \`sweep.sizes\` must be a non-empty array of positive numbers.`);
+  }
+  if (
+    s.depthPercent !== undefined &&
+    (typeof s.depthPercent !== 'number' || s.depthPercent < 0 || s.depthPercent > 100)
+  ) {
+    throw new Error(`Case "${caseId}": \`sweep.depthPercent\` must be a number 0–100.`);
+  }
+  if (s.seed !== undefined && typeof s.seed !== 'number') {
+    throw new Error(`Case "${caseId}": \`sweep.seed\` must be a number.`);
+  }
+}
+
+/** Shape-check the scripted follow-up user turns. */
+function validateFollowUps(caseId: string, followUps: unknown): void {
+  if (!Array.isArray(followUps) || followUps.length === 0) {
+    throw new Error(`Case "${caseId}": \`followUps\` must be a non-empty array of strings.`);
+  }
+  for (const t of followUps as unknown[]) {
+    if (typeof t !== 'string' || t.trim() === '') {
+      throw new Error(`Case "${caseId}": every \`followUps\` entry must be a non-empty string.`);
+    }
+  }
+}
+
+/** Shape-check the canned tool responders (tool-execution loop). */
+function validateToolResponders(caseId: string, responders: unknown): void {
+  if (!Array.isArray(responders) || responders.length === 0) {
+    throw new Error(`Case "${caseId}": \`toolResponders\` must be a non-empty array.`);
+  }
+  for (const r of responders as unknown[]) {
+    if (r === null || typeof r !== 'object') {
+      throw new Error(`Case "${caseId}": each \`toolResponders\` entry must be an object.`);
+    }
+    const resp = r as Record<string, unknown>;
+    if (typeof resp.name !== 'string' || resp.name.trim() === '') {
+      throw new Error(`Case "${caseId}": \`toolResponders\` entry needs a non-empty \`name\`.`);
+    }
+    if (typeof resp.response !== 'string') {
+      throw new Error(`Case "${caseId}": responder "${resp.name}" needs a string \`response\`.`);
+    }
+    if (resp.byArgs !== undefined) {
+      if (!Array.isArray(resp.byArgs)) {
+        throw new Error(`Case "${caseId}": responder "${resp.name}" \`byArgs\` must be an array.`);
+      }
+      for (const b of resp.byArgs as unknown[]) {
+        const rule = b as Record<string, unknown> | null;
+        if (
+          rule === null ||
+          typeof rule !== 'object' ||
+          typeof rule.argsContains !== 'string' ||
+          rule.argsContains === '' ||
+          typeof rule.response !== 'string'
+        ) {
+          throw new Error(
+            `Case "${caseId}": responder "${resp.name}" \`byArgs\` entries need \`argsContains\` and \`response\` strings.`,
+          );
+        }
+      }
+    }
   }
 }
 

@@ -418,10 +418,20 @@ export function CaseEditModal({
         ...(image !== undefined ? { image } : {}),
         ...(isTextKind && previewAccepts.length > 0 ? { acceptWithRemark: previewAccepts } : {}),
         ...(isTextKind && forgiveFormatting ? { forgiveFormatting: true } : {}),
-        // Preserve a parameterization block the structured editor doesn't
-        // author. `input` / evaluator `value` stay {{var}} templates;
-        // authoring the `generate` block itself is done via YAML.
+        // Preserve advanced fields the structured editor doesn't
+        // author — this spread reconstructs the case from form state,
+        // so ANY field not named here is silently dropped on Save.
+        // `generate`: input / evaluator `value` stay {{var}} templates;
+        // the block itself is authored via YAML. Same for the scripted
+        // conversation fields (followUps / toolResponders /
+        // maxToolRounds) and the context-sweep block.
         ...(initial?.generate !== undefined ? { generate: initial.generate } : {}),
+        ...(initial?.followUps !== undefined ? { followUps: initial.followUps } : {}),
+        ...(initial?.toolResponders !== undefined
+          ? { toolResponders: initial.toolResponders }
+          : {}),
+        ...(initial?.maxToolRounds !== undefined ? { maxToolRounds: initial.maxToolRounds } : {}),
+        ...(initial?.sweep !== undefined ? { sweep: initial.sweep } : {}),
       },
     };
   };
@@ -489,6 +499,29 @@ export function CaseEditModal({
                     variables or answer formula, export to YAML, edit the{' '}
                     <code className="font-mono">generate</code> block, and re-import. The block is
                     preserved on save.
+                  </div>
+                ) : null}
+
+                {initial?.followUps !== undefined ||
+                initial?.toolResponders !== undefined ||
+                initial?.sweep !== undefined ? (
+                  <div className="rounded-md border border-sky-500/40 bg-sky-500/10 px-3 py-2 text-[11px] leading-relaxed text-fg-muted">
+                    <span className="font-semibold text-sky-700 dark:text-sky-400">
+                      ⤷ Advanced case
+                    </span>{' '}
+                    — this case carries{' '}
+                    {[
+                      initial?.followUps !== undefined
+                        ? `scripted follow-up turns (${initial.followUps.length})`
+                        : null,
+                      initial?.toolResponders !== undefined ? 'a tool-execution loop' : null,
+                      initial?.sweep !== undefined ? 'a context-length sweep' : null,
+                    ]
+                      .filter((s) => s !== null)
+                      .join(', ')}
+                    . Those fields aren't editable in this form but are{' '}
+                    <span className="font-semibold">preserved on save</span>; author them via
+                    Export / Import YAML. The Try-it sandbox below scores the FINAL answer only.
                   </div>
                 ) : null}
 

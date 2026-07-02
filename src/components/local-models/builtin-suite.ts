@@ -10,6 +10,13 @@
  * fold them back into the YAML and re-mirror.
  */
 
+import { SUITE_EXTRA_CHARACTER } from './suite-extra-character';
+import { SUITE_EXTRA_CODE } from './suite-extra-code';
+import { SUITE_EXTRA_INSTRUCTION } from './suite-extra-instruction';
+import { SUITE_EXTRA_MATH } from './suite-extra-math';
+import { SUITE_EXTRA_MULTILINGUAL } from './suite-extra-multilingual';
+import { SUITE_EXTRA_REASONING } from './suite-extra-reasoning';
+import { SUITE_EXTRA_VISION } from './suite-extra-vision';
 import {
   VISION_FIXTURE_CIRCLES_4,
   VISION_FIXTURE_OCR_TOKEN,
@@ -102,6 +109,60 @@ export interface InlineCase {
    * plain YAML, so new parameterized cases need no code change.
    */
   readonly generate?: CaseGenerator;
+  /**
+   * User turns 2..N — `input` stays turn 1. Each entry is sent AFTER
+   * the assistant finishes the previous turn (including any tool
+   * rounds). `{{var}}` templates apply. Evaluation runs against the
+   * FINAL assistant content only; the full exchange is captured on
+   * the row's `transcript` for debugging. Tests instruction retention
+   * across turns without touching the evaluator.
+   */
+  readonly followUps?: readonly string[];
+  /**
+   * Canned tool results, enabling a real tool-execution LOOP: when the
+   * model emits a tool_call whose function name matches a responder,
+   * the runner echoes the assistant message back plus one role:'tool'
+   * message per matched call, then requests again — until the model
+   * answers in text or `maxToolRounds` is hit. A call with NO matching
+   * responder ends the loop (evaluated as-is). Data-only authoring:
+   * `byArgs[].argsContains` is a substring match on the raw arguments
+   * JSON, checked in order; `response` is the fallback.
+   */
+  readonly toolResponders?: readonly ToolResponder[];
+  /** Cap on assistant rounds per user turn. Default 4. */
+  readonly maxToolRounds?: number;
+  /**
+   * Context-length sweep. At run time this ONE authored case expands
+   * into per-size instances (`<id>@<size>`) — a seeded haystack of
+   * ~size tokens with a needle sentence spliced at `depthPercent`.
+   * The authoring contract: `input` contains `{{haystack}}`, and the
+   * evaluator value may contain `{{needle}}`. Sizes exceeding the
+   * model's known context window are recorded as skipped, keeping
+   * denominators honest. See `ctx-haystack.ts`.
+   */
+  readonly sweep?: SweepSpec;
+}
+
+export interface SweepSpec {
+  /** Discriminant for future sweep types. */
+  readonly kind: 'context';
+  /** Nominal prompt sizes in tokens, e.g. [2048, 4096, 8192, 16384, 32768]. */
+  readonly sizes: readonly number[];
+  /** Needle position: 0 = start, 100 = end. Default 50. */
+  readonly depthPercent?: number;
+  /** Haystack seed — same seed ⇒ byte-identical haystacks. Default 42. */
+  readonly seed?: number;
+}
+
+export interface ToolResponder {
+  readonly name: string;
+  /** Default canned result (plain string; JSON allowed). `{{var}}` templated. */
+  readonly response: string;
+  /** Optional arg-keyed overrides, first match wins. */
+  readonly byArgs?: readonly {
+    readonly argsContains: string;
+    readonly response: string;
+  }[];
 }
 
 /**
@@ -188,7 +249,7 @@ function applyForgiveFormatting(cases: readonly InlineCase[]): InlineCase[] {
 export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
   id: 'local-model-rating',
   name: 'local-model-rating',
-  version: '0.9.0',
+  version: '1.0.0',
   description:
     'One hundred cases drawing on the ideas behind TruthfulQA (common misconceptions), HumanEval (code generation), GSM8K (multi-step word problems), BBH (object tracking, syllogisms), IFEval (constrained generation), DROP (passage comprehension), the Cognitive Reflection Test, and the LAION "Alice in Wonderland" sibling problem, plus the original suite: instruction-following, structured output, code (trace · debug · Big-O · SQL · language ID · generation), math (algebra · geometry · sequences · probability · arithmetic · base conversions · modular days · percent · fractions · operator precedence), classic logic puzzles (knights & knaves, gotchas, fallacies, family relations, syllogisms, object tracking), well-known "easy problems LLMs get wrong" (9.11-vs-9.9 decimal comparison, bat-and-ball, widgets, lily-pad, sibling counting, character counting, pound-of-feathers, Monty Hall, leap-year rule), pragmatic inference, ciphers (Caesar · ROT13), encoding (base64), commonsense physics & time, science facts, sorting, anagrams, classifiers (sentiment · spam · enum · topic · toxicity · question vs statement), multilingual translation, mid- and long-context retrieval, multi-step inference, refusal, character-level reasoning, tool-call shape, native tool calling, Roman numerals, unit conversions, date arithmetic, set operations, prompt-injection resistance, strict multi-line / single-line / case formatting, JSON schema (flat + nested + array), and vision (counting, OCR, spatial). Several cases are parameterized — their prompt and expected answer are re-randomized each run so a model cannot pass famous gotchas from memorization — and each case decides per-case whether to forgive cosmetic formatting (parens / markdown / LaTeX / Unicode / case) with a remark. Tool-use and vision cases auto-skip on models that lack the capability.',
   passThreshold: 0.6,
@@ -486,6 +547,118 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       requires: 'tool_use',
       weight: 1,
       tags: ['tool-use', 'routing'],
+    },
+    {
+      id: 'multi-turn-recall-token',
+      input:
+        'Remember this token exactly: {{token}}. You will need it later. For now reply with ONLY the word READY.',
+      followUps: [
+        'What is the capital of France? Reply with ONLY the city name.',
+        'Now reply with ONLY the token I asked you to remember earlier — exact characters, nothing else.',
+      ],
+      generate: {
+        vars: {
+          a: { int: { min: 100, max: 999 } },
+          b: { pick: ['ZEBRA', 'FALCON', 'MARBLE', 'COBALT', 'ORCHID'] },
+          token: { expr: "b + '-' + a" },
+        },
+      },
+      expect: { kind: 'contains', value: '{{token}}' },
+      weight: 1,
+      tags: ['multi-turn', 'instruction-following', 'retrieval'],
+    },
+    {
+      id: 'multi-turn-constraint-retention',
+      input:
+        'For the REST of this conversation, end every reply with the word {{sentinel}} on its own line. Acknowledge with ONLY the word OK (then the required ending).',
+      followUps: [
+        'Name any one primary color.',
+        'What is 2+2? Remember the standing rule.',
+      ],
+      generate: {
+        vars: { sentinel: { pick: ['BLUEBIRD', 'LANTERN', 'GRANITE', 'VELVET'] } },
+      },
+      expect: { kind: 'regex', value: '{{sentinel}}\\s*$' },
+      weight: 1,
+      tags: ['multi-turn', 'instruction-following', 'gotcha'],
+    },
+    {
+      id: 'tool-loop-weather-roundtrip',
+      input:
+        'Look up the current temperature in {{city}} with the provided tool, then reply with ONLY the integer Celsius temperature the tool returns — no prose, no units.',
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'lookup_temperature',
+            description: 'Return the current temperature for a city in Celsius.',
+            parameters: {
+              type: 'object',
+              required: ['city'],
+              properties: { city: { type: 'string' } },
+            },
+          },
+        },
+      ],
+      toolResponders: [{ name: 'lookup_temperature', response: '{"temperature_c": {{t}}}' }],
+      generate: {
+        vars: {
+          city: { pick: ['Zagreb', 'Oslo', 'Porto', 'Graz', 'Lyon'] },
+          t: { int: { min: -7, max: 34 } },
+        },
+      },
+      expect: { kind: 'regex', value: '^\\s*{{t}}\\s*$' },
+      requires: 'tool_use',
+      weight: 1,
+      tags: ['tool-use', 'tool-loop', 'native'],
+    },
+    {
+      id: 'tool-loop-ignore-distractor',
+      input:
+        'Fetch the order status for order id {{oid}} using the tool, then reply with ONLY the status word the tool returns, uppercased.',
+      tools: [
+        {
+          type: 'function',
+          function: {
+            name: 'get_order_status',
+            description: 'Return the status of an order by id.',
+            parameters: {
+              type: 'object',
+              required: ['order_id'],
+              properties: { order_id: { type: 'string' } },
+            },
+          },
+        },
+      ],
+      toolResponders: [
+        {
+          name: 'get_order_status',
+          // The canned result buries the answer next to a distractor
+          // field — the model must read the right key, not echo JSON.
+          response:
+            '{"order_id": "{{oid}}", "status": "{{status}}", "previous_status": "pending", "note": "status field is authoritative"}',
+        },
+      ],
+      generate: {
+        vars: {
+          oid: { int: { min: 10000, max: 99999 } },
+          status: { pick: ['shipped', 'delayed', 'cancelled', 'delivered'] },
+          upper: { expr: 'status.toUpperCase()' },
+        },
+      },
+      expect: { kind: 'regex', value: '^\\s*{{upper}}\\s*$' },
+      requires: 'tool_use',
+      weight: 1,
+      tags: ['tool-use', 'tool-loop', 'comprehension'],
+    },
+    {
+      id: 'ctx-needle',
+      input:
+        'Read the document below carefully, then answer: what is the secret passcode for the vault?\n\n=== DOCUMENT ===\n{{haystack}}\n=== END DOCUMENT ===\n\nReply with ONLY the passcode, exactly as written (digits and dashes), no prose.',
+      sweep: { kind: 'context', sizes: [2048, 8192, 32768], depthPercent: 50 },
+      expect: { kind: 'contains', value: '{{needle}}' },
+      weight: 1,
+      tags: ['long-context', 'retrieval'],
     },
     {
       id: 'vision-count-circles',
@@ -1310,5 +1483,16 @@ export const LOCAL_MODEL_RATING_SUITE: InlineSuite = {
       weight: 1,
       tags: ['reasoning', 'character-level'],
     },
+    // ── v1.0 expansion — ~200 further cases, authored per category in
+    //    suite-extra-*.ts (kept out of this file so it stays scannable).
+    //    Expansion cases carry `forgiveFormatting` inline instead of
+    //    registering in FORGIVE_FORMATTING_IDS.
+    ...SUITE_EXTRA_REASONING,
+    ...SUITE_EXTRA_MATH,
+    ...SUITE_EXTRA_CODE,
+    ...SUITE_EXTRA_CHARACTER,
+    ...SUITE_EXTRA_MULTILINGUAL,
+    ...SUITE_EXTRA_INSTRUCTION,
+    ...SUITE_EXTRA_VISION,
   ]),
 };

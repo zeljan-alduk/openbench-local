@@ -1,7 +1,9 @@
 'use client';
 
 import { useMemo, useState } from 'react';
+import { admitQuantGroups } from './model-id-parse';
 import type { ModelRunState } from './multi-bench-panel';
+import { wilsonInterval } from './stats';
 
 /**
  * Quality × Speed scatter chart.
@@ -34,6 +36,9 @@ interface Point {
   readonly passed: number;
   readonly total: number;
   readonly passRate: number;
+  /** Wilson 95% CI bounds on the pass rate — drawn as a vertical error bar. */
+  readonly ciLo: number;
+  readonly ciHi: number;
   readonly avgTokPerSec: number;
   readonly p95LatencyMs: number;
   readonly totalMs: number;
@@ -130,6 +135,7 @@ export function QualitySpeedChart({ runs }: Props) {
       .map((r): Point => {
         const totalMs = r.rows.reduce((sum, row) => sum + row.totalMs, 0);
         const tokps = r.summary.avgTokPerSec ?? 0;
+        const ci = wilsonInterval(r.summary.passed, r.summary.total);
         return {
           runId: r.runId,
           id: r.model.id,
@@ -139,6 +145,8 @@ export function QualitySpeedChart({ runs }: Props) {
           passed: r.summary.passed,
           total: r.summary.total,
           passRate: r.summary.passRate,
+          ciLo: ci.lo,
+          ciHi: ci.hi,
           avgTokPerSec: tokps,
           p95LatencyMs: r.summary.p95LatencyMs,
           totalMs,
@@ -169,6 +177,22 @@ export function QualitySpeedChart({ runs }: Props) {
     );
     return [...front].sort((a, b) => a.avgTokPerSec - b.avgTokPerSec);
   }, [points]);
+
+  // Quant-variant connectors: same admission rule as the Quant A/B
+  // panel (≥2 DISTINCT known quants of one base model) so the two
+  // views can't disagree. Re-runs of an identical model never link.
+  const quantLinks = useMemo(() => {
+    const visible = allCandidates.filter((r) => !excluded.has(r.runId));
+    const byRunId = new Map(points.map((p) => [p.runId, p]));
+    return Array.from(admitQuantGroups(visible).values())
+      .map((members) =>
+        members
+          .map((m) => byRunId.get(m.runId))
+          .filter((p): p is Point => p !== undefined)
+          .sort((a, b) => a.avgTokPerSec - b.avgTokPerSec),
+      )
+      .filter((pts) => pts.length >= 2);
+  }, [allCandidates, excluded, points]);
 
   // Bail when there's nothing useful to show even unfiltered. When
   // the user has merely filtered the set down below 2, render a
@@ -515,6 +539,24 @@ export function QualitySpeedChart({ runs }: Props) {
             Pass rate
           </text>
 
+          {/* Quant-variant connectors — subtle solid lines linking
+              quants of the same base model (same admission rule as
+              the Quant A/B panel). Deliberately quieter than the
+              accent-dashed Pareto frontier. */}
+          {quantLinks.map((pts) => (
+            <polyline
+              key={`quant-${pts.map((p) => p.runId).join('-')}`}
+              points={pts.map((p) => `${xScale(p.avgTokPerSec)},${yScale(p.passRate)}`).join(' ')}
+              fill="none"
+              stroke="rgb(var(--fg-muted))"
+              strokeWidth={1}
+              opacity={0.35}
+              className="pointer-events-none"
+            >
+              <title>quant variants of one base model</title>
+            </polyline>
+          ))}
+
           {/* Pareto frontier polyline (under the dots so dots stay clickable). */}
           {frontier.length >= 2 ? (
             <polyline
@@ -573,6 +615,21 @@ export function QualitySpeedChart({ runs }: Props) {
                   fill="transparent"
                   className="cursor-crosshair"
                 />
+                {/* Wilson 95% CI on the pass rate — vertical error bar
+                    with end caps, under the dot so the dot stays crisp.
+                    Overlapping bars = the quality difference may be noise. */}
+                <g opacity={isHover || hover === null ? 0.55 : 0.2} aria-hidden>
+                  <line
+                    x1={pl.cx}
+                    x2={pl.cx}
+                    y1={yScale(p.ciHi)}
+                    y2={yScale(p.ciLo)}
+                    stroke={p.color}
+                    strokeWidth={1.5}
+                  />
+                  <line x1={pl.cx - 4} x2={pl.cx + 4} y1={yScale(p.ciHi)} y2={yScale(p.ciHi)} stroke={p.color} strokeWidth={1.5} />
+                  <line x1={pl.cx - 4} x2={pl.cx + 4} y1={yScale(p.ciLo)} y2={yScale(p.ciLo)} stroke={p.color} strokeWidth={1.5} />
+                </g>
                 <circle
                   cx={pl.cx}
                   cy={pl.cy}
@@ -714,6 +771,10 @@ function Tooltip({ point, maxTokps }: { point: Point; maxTokps: number }) {
         <dt className="text-fg-muted">Passed</dt>
         <dd className="text-right font-mono text-fg">
           {point.passed} / {point.total}
+        </dd>
+        <dt className="text-fg-muted">95% CI</dt>
+        <dd className="text-right font-mono text-fg">
+          {Math.round(point.ciLo * 100)}–{Math.round(point.ciHi * 100)}%
         </dd>
         <dt className="text-fg-muted">Avg tok/s</dt>
         <dd className="text-right font-mono font-semibold text-fg">

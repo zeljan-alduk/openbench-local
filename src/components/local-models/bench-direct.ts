@@ -44,6 +44,23 @@ export interface CapturedToolCall {
   readonly argumentsRaw: string;
 }
 
+/**
+ * One entry of a scripted-conversation exchange (multi-turn /
+ * tool-loop cases). `input`/`output` on the row keep their meanings
+ * (turn-1 prompt / final answer); this is the full trace for the
+ * detail view.
+ */
+export interface TranscriptEntry {
+  readonly role: 'user' | 'assistant' | 'tool';
+  readonly content: string;
+  /** Assistant rounds only. */
+  readonly toolCalls?: readonly CapturedToolCall[];
+  /** Tool messages only. */
+  readonly toolCallId?: string;
+  /** Assistant rounds: wall time of that round. */
+  readonly ms?: number;
+}
+
 /** One attempt within a repeated case. */
 export interface AttemptResult {
   readonly passed: boolean;
@@ -104,6 +121,8 @@ export interface BenchCaseRow {
   readonly skipReason?: string;
   readonly error?: string;
   readonly detail?: unknown;
+  /** Full exchange for multi-turn / tool-loop cases; absent on single-shot rows. */
+  readonly transcript?: readonly TranscriptEntry[];
 }
 
 export interface BenchSummary {
@@ -207,15 +226,21 @@ export interface RunBenchOptions {
   /** Called when the warm-up ping completes (or fails). Diagnostic only. */
   readonly onWarmUp?: (result: { ok: boolean; ms: number; error?: string }) => void;
   /**
-   * Capabilities the model claims (per the id-heuristics in
-   * capabilities.ts). When a case carries `requires` and the
-   * capability is absent, the runner records a skipped row instead
-   * of dispatching the request. Pass `null` to opt out of the gate
-   * (still useful when the heuristic mis-classifies).
+   * Capabilities the model claims (per capabilities.ts resolution —
+   * engine truth when available, name heuristics otherwise). When a
+   * case carries `requires` and the capability is absent, the runner
+   * records a skipped row instead of dispatching the request. Pass
+   * `null` to opt out of the gate (still useful when the heuristic
+   * mis-classifies).
    */
   readonly modelCapabilities?: {
     readonly toolUse: boolean;
     readonly vision: boolean;
+    /** Per-field provenance — drives the skip-reason wording. */
+    readonly sources?: {
+      readonly toolUse: 'engine' | 'inferred';
+      readonly vision: 'engine' | 'inferred';
+    };
   } | null;
   /** Per-request generation parameters. Defaults: temp=0, max_tokens=1024, no system. */
   readonly runConfig?: RunConfig;
@@ -271,13 +296,12 @@ export async function runBenchDirect(opts: RunBenchOptions): Promise<{
     const c = opts.suite.cases[i];
     if (c === undefined) continue;
 
-    // Capability gate: if the case declares a required capability and
-    // the model id-heuristic says the model lacks it, record a
-    // skipped row without dispatching the request. Cheaper for the
-    // user (no wasted seconds waiting for a fail) and cleaner UX
-    // (a "skipped — lacks vision" badge reads better than a fail).
-    const missing = capabilityMissing(c, opts.modelCapabilities);
-    if (missing !== null) {
+    // Pre-set skip (context-sweep instances whose size exceeds the
+    // model's window — see ctx-haystack.ts). Same skipped-row shape as
+    // the capability gate: visible in the grid, excluded from the
+    // pass-rate denominator, never silently dropped.
+    const presetSkip = (c as { skipReasonPreset?: string }).skipReasonPreset;
+    if (presetSkip !== undefined) {
       const row: BenchCaseRow = {
         id: c.id,
         passed: false,
@@ -295,7 +319,43 @@ export async function runBenchDirect(opts: RunBenchOptions): Promise<{
         toolCalls: [],
         imageDataUrl: c.image?.dataUrl ?? null,
         skipped: true,
-        skipReason: `lacks ${missing} capability`,
+        skipReason: presetSkip,
+      };
+      opts.onCase(row, i);
+      rows.push(row);
+      continue;
+    }
+
+    // Capability gate: if the case declares a required capability and
+    // the resolved capabilities say the model lacks it, record a
+    // skipped row without dispatching the request. Cheaper for the
+    // user (no wasted seconds waiting for a fail) and cleaner UX
+    // (a "skipped — lacks vision" badge reads better than a fail).
+    const missing = capabilityMissing(c, opts.modelCapabilities);
+    if (missing !== null) {
+      const src =
+        missing === 'vision'
+          ? opts.modelCapabilities?.sources?.vision
+          : opts.modelCapabilities?.sources?.toolUse;
+      const provenance = src === 'engine' ? 'engine-reported' : 'inferred from model name';
+      const row: BenchCaseRow = {
+        id: c.id,
+        passed: false,
+        score: 0,
+        totalMs: 0,
+        ttftMs: null,
+        tokensIn: null,
+        tokensOut: null,
+        tokPerSec: null,
+        reasoningRatio: null,
+        input: c.input,
+        expect: c.expect,
+        output: '',
+        reasoningOutput: '',
+        toolCalls: [],
+        imageDataUrl: c.image?.dataUrl ?? null,
+        skipped: true,
+        skipReason: `lacks ${missing} capability (${provenance})`,
       };
       opts.onCase(row, i);
       rows.push(row);
@@ -456,9 +516,15 @@ const PROGRESS_INTERVAL_MS = 120;
 
 async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
   const start = performance.now();
-  let captured: SseCapture;
+  const multiRound = c.followUps !== undefined || c.toolResponders !== undefined;
+  let captured: ConversationCapture;
   try {
-    captured = await streamCompletion(c, ctx);
+    // Plain single-turn cases take the exact same wire path as before
+    // (one request, no transcript); scripted cases go through the
+    // conversation loop.
+    captured = multiRound
+      ? await runConversation(c, ctx)
+      : toConversation(await streamTurn(buildInitialMessages(c, ctx), c, ctx));
   } catch (e) {
     return {
       id: c.id,
@@ -481,7 +547,7 @@ async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
     };
   }
   const totalMs = performance.now() - start;
-  const toolCalls = freezeToolCalls(captured.toolCalls);
+  const toolCalls = captured.allToolCalls;
   const evalResult: EvalOutcome = evaluateRow(
     { content: captured.content, toolCalls },
     c.expect,
@@ -513,8 +579,188 @@ async function runOne(c: InlineCase, ctx: RunCtx): Promise<BenchCaseRow> {
     toolCalls,
     imageDataUrl: c.image?.dataUrl ?? null,
     skipped: false,
+    ...(captured.transcript !== undefined ? { transcript: captured.transcript } : {}),
     ...(evalResult.remark !== undefined ? { remark: evalResult.remark } : {}),
     ...(evalResult.detail !== undefined ? { detail: evalResult.detail } : {}),
+  };
+}
+
+/**
+ * Message unit on the wire — loose on purpose (OpenAI-compat engines
+ * differ in what they echo back).
+ */
+interface WireMessage {
+  readonly role: 'system' | 'user' | 'assistant' | 'tool';
+  readonly content: unknown;
+  readonly tool_calls?: ReadonlyArray<{
+    readonly id: string;
+    readonly type: 'function';
+    readonly function: { readonly name: string; readonly arguments: string };
+  }>;
+  readonly tool_call_id?: string;
+}
+
+/** Aggregated result of a full (possibly multi-round) conversation. */
+interface ConversationCapture {
+  /** FINAL assistant text — what the evaluator scores. */
+  readonly content: string;
+  /** Reasoning across all rounds, concatenated. */
+  readonly reasoning: string;
+  /** Peak prompt tokens (last round — the longest context). */
+  readonly tokensIn: number | null;
+  /** Σ completion tokens across rounds. */
+  readonly tokensOut: number | null;
+  readonly tokensReasoning: number | null;
+  /** First token of round 1. */
+  readonly ttftMs: number | null;
+  /** Union of tool calls across ALL rounds (keeps the tool_call evaluator working). */
+  readonly allToolCalls: readonly CapturedToolCall[];
+  /** Full exchange, only set for multi-round cases. */
+  readonly transcript?: readonly TranscriptEntry[];
+}
+
+function toConversation(single: SseCapture): ConversationCapture {
+  return {
+    content: single.content,
+    reasoning: single.reasoning,
+    tokensIn: single.tokensIn,
+    tokensOut: single.tokensOut,
+    tokensReasoning: single.tokensReasoning,
+    ttftMs: single.ttftMs,
+    allToolCalls: freezeToolCalls(single.toolCalls),
+  };
+}
+
+/** Pick the canned response for one captured call, or null when no responder matches. */
+function responderFor(
+  c: InlineCase,
+  call: CapturedToolCall,
+): string | null {
+  const responder = c.toolResponders?.find((r) => r.name === call.name);
+  if (responder === undefined) return null;
+  if (responder.byArgs !== undefined) {
+    for (const rule of responder.byArgs) {
+      if (call.argumentsRaw.includes(rule.argsContains)) return rule.response;
+    }
+  }
+  return responder.response;
+}
+
+const DEFAULT_MAX_TOOL_ROUNDS = 4;
+
+/**
+ * Scripted-conversation orchestration: user turns × tool rounds.
+ *
+ * Per user turn: stream an assistant round; when it emitted tool
+ * calls AND every call has a responder AND the round budget allows,
+ * echo the assistant message (synthesizing `call_<index>` ids for
+ * engines that stream none — llama.cpp does) plus one role:'tool'
+ * result per call, and go again. Otherwise the turn is done: send the
+ * next follow-up user message, or finish. The per-case timeout wraps
+ * the WHOLE conversation via ctx.signal — no per-turn knob.
+ */
+async function runConversation(c: InlineCase, ctx: RunCtx): Promise<ConversationCapture> {
+  const messages: WireMessage[] = [...buildInitialMessages(c, ctx)];
+  const transcript: TranscriptEntry[] = [{ role: 'user', content: c.input }];
+  const turns: readonly string[] = c.followUps ?? [];
+  const maxRounds = Math.max(1, c.maxToolRounds ?? DEFAULT_MAX_TOOL_ROUNDS);
+
+  let finalContent = '';
+  let reasoning = '';
+  let tokensIn: number | null = null;
+  let tokensOut: number | null = null;
+  let tokensReasoning: number | null = null;
+  let ttftMs: number | null = null;
+  const allCalls: CapturedToolCall[] = [];
+
+  let turnIdx = 0;
+  let roundsThisTurn = 0;
+  for (;;) {
+    const roundStart = performance.now();
+    const captured = await streamTurn(messages, c, ctx);
+    roundsThisTurn += 1;
+
+    if (ttftMs === null) ttftMs = captured.ttftMs;
+    if (captured.tokensIn !== null) tokensIn = captured.tokensIn; // last round = peak context
+    if (captured.tokensOut !== null) tokensOut = (tokensOut ?? 0) + captured.tokensOut;
+    if (captured.tokensReasoning !== null) {
+      tokensReasoning = (tokensReasoning ?? 0) + captured.tokensReasoning;
+    }
+    if (captured.reasoning.length > 0) {
+      reasoning += (reasoning.length > 0 ? '\n\n' : '') + captured.reasoning;
+    }
+    finalContent = captured.content;
+
+    const calls = freezeToolCalls(captured.toolCalls).map((tc, i) => ({
+      ...tc,
+      // Engines that stream no id (llama.cpp) still need one for the
+      // role:'tool' echo to be accepted.
+      id: tc.id.length > 0 ? tc.id : `call_${i}`,
+    }));
+    allCalls.push(...calls);
+    transcript.push({
+      role: 'assistant',
+      content: captured.content,
+      ...(calls.length > 0 ? { toolCalls: calls } : {}),
+      ms: performance.now() - roundStart,
+    });
+
+    const responses =
+      calls.length > 0 && roundsThisTurn < maxRounds
+        ? calls.map((call) => ({ call, response: responderFor(c, call) }))
+        : null;
+    if (responses !== null && responses.every((r) => r.response !== null)) {
+      // Tool round: echo the assistant turn + one tool result per call.
+      messages.push({
+        role: 'assistant',
+        content: captured.content.length > 0 ? captured.content : null,
+        tool_calls: calls.map((call) => ({
+          id: call.id,
+          type: 'function' as const,
+          function: { name: call.name, arguments: call.argumentsRaw },
+        })),
+      });
+      for (const { call, response } of responses) {
+        messages.push({ role: 'tool', content: response, tool_call_id: call.id });
+        transcript.push({ role: 'tool', content: response ?? '', toolCallId: call.id });
+      }
+      continue;
+    }
+
+    // Turn finished — advance the script or end the conversation.
+    if (turnIdx < turns.length) {
+      const next = turns[turnIdx];
+      turnIdx += 1;
+      roundsThisTurn = 0;
+      messages.push({
+        role: 'assistant',
+        content: captured.content,
+        ...(calls.length > 0
+          ? {
+              tool_calls: calls.map((call) => ({
+                id: call.id,
+                type: 'function' as const,
+                function: { name: call.name, arguments: call.argumentsRaw },
+              })),
+            }
+          : {}),
+      });
+      messages.push({ role: 'user', content: next });
+      transcript.push({ role: 'user', content: next ?? '' });
+      continue;
+    }
+    break;
+  }
+
+  return {
+    content: finalContent,
+    reasoning,
+    tokensIn,
+    tokensOut,
+    tokensReasoning,
+    ttftMs,
+    allToolCalls: allCalls,
+    transcript,
   };
 }
 
@@ -542,14 +788,20 @@ interface SseCapture {
   readonly toolCalls: ReadonlyMap<number, { id: string; name: string; argumentsRaw: string }>;
 }
 
-async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture> {
-  const url = `${ctx.chatBaseUrl}/chat/completions`;
-  const start = performance.now();
+/**
+ * System (when configured) + turn-1 user message for a case. The
+ * conversation loop appends assistant/tool/follow-up messages after
+ * these; single-turn cases send exactly this array.
+ */
+function buildInitialMessages(c: InlineCase, ctx: RunCtx): WireMessage[] {
   const cfg = ctx.runConfig ?? {};
 
   // Multimodal body: when the case attaches an image, send the
   // OpenAI-compat content-array shape (text part + image_url part).
-  // Otherwise keep the simple string content for max compat.
+  // Otherwise keep the simple string content for max compat. (Ollama's
+  // /v1 compat layer accepts base64 data URLs and converts them to its
+  // native `images` field internally; remote http(s) image URLs would
+  // be rejected there — fine while `image` is dataUrl-only.)
   const userContent: unknown =
     c.image !== undefined
       ? [
@@ -561,9 +813,9 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
         ]
       : c.input;
 
-  // Build the messages array. When the user has set a system prompt
-  // in the Setup panel, prepend a system message; otherwise omit it
-  // so providers that mis-handle empty system messages aren't poked.
+  // When the user has set a system prompt in the Setup panel, prepend
+  // a system message; otherwise omit it so providers that mis-handle
+  // empty system messages aren't poked.
   //
   // Thinking-off branch: when reasoningEffort === 'off', prepend a
   // best-effort no-thinking directive that covers multiple model
@@ -581,7 +833,7 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
   // rest of the thinking — and the final answer — into `content`,
   // which then fails the evaluator. Describe the tokens, don't spell
   // them.
-  const messages: Array<{ role: string; content: unknown }> = [];
+  const messages: WireMessage[] = [];
   const sysPrompt = (cfg.systemPrompt ?? '').trim();
   const noThink =
     cfg.reasoningEffort === 'off'
@@ -590,6 +842,22 @@ async function streamCompletion(c: InlineCase, ctx: RunCtx): Promise<SseCapture>
   const combinedSys = [noThink, sysPrompt].filter((s) => s.length > 0).join('\n\n');
   if (combinedSys.length > 0) messages.push({ role: 'system', content: combinedSys });
   messages.push({ role: 'user', content: userContent });
+  return messages;
+}
+
+/**
+ * One streamed assistant round over an explicit messages array. The
+ * SSE capture machinery is unchanged from the original single-shot
+ * implementation — only message construction moved out.
+ */
+async function streamTurn(
+  messages: readonly WireMessage[],
+  c: InlineCase,
+  ctx: RunCtx,
+): Promise<SseCapture> {
+  const url = `${ctx.chatBaseUrl}/chat/completions`;
+  const start = performance.now();
+  const cfg = ctx.runConfig ?? {};
 
   const body: Record<string, unknown> = {
     model: ctx.modelId,

@@ -16,6 +16,9 @@
 import { useState } from 'react';
 import type { BenchCaseRow, BenchSummary } from './bench-direct';
 import type { InFlightCase } from './multi-bench-panel';
+import { rollupSweeps } from './ctx-haystack';
+import { wilsonInterval } from './stats';
+import { passBarClass, passTextClass } from './status-colors';
 
 interface Props {
   readonly rows: readonly BenchCaseRow[];
@@ -118,6 +121,56 @@ export function BenchTable({ rows, summary, runError, suiteCases, inFlight, onRe
       </div>
 
       {summary !== null ? <SummaryFooter summary={summary} /> : null}
+      <SweepStrip rows={rows} />
+    </div>
+  );
+}
+
+/**
+ * Context-length degradation strip — one row per sweep family showing
+ * pass/fail/skip per size. Renders nothing when the run had no sweep
+ * instances.
+ */
+function SweepStrip({ rows }: { rows: readonly BenchCaseRow[] }) {
+  const families = rollupSweeps(rows);
+  if (families.size === 0) return null;
+  return (
+    <div className="rounded-lg border border-border bg-bg px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-fg-muted">
+        Context-length sweep
+      </p>
+      <ul className="mt-2 flex flex-col gap-2">
+        {Array.from(families.entries()).map(([familyId, points]) => (
+          <li key={familyId} className="flex flex-wrap items-center gap-3">
+            <span className="w-32 shrink-0 truncate font-mono text-[11px] text-fg" title={familyId}>
+              {familyId}
+            </span>
+            <div className="flex items-center gap-1.5">
+              {points.map((p) => (
+                <span
+                  key={p.size}
+                  title={`~${p.size >= 1024 ? `${Math.round(p.size / 1024)}k` : p.size} tokens: ${
+                    p.skipped ? 'skipped (over context window)' : p.passed ? 'pass' : 'fail'
+                  }${p.ttftMs !== null ? ` · TTFT ${(p.ttftMs / 1000).toFixed(1)}s` : ''}`}
+                  className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] ${
+                    p.skipped
+                      ? 'border-border bg-bg-subtle text-fg-faint'
+                      : p.passed
+                        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                        : 'border-red-500/40 bg-red-500/10 text-red-600 dark:text-red-400'
+                  }`}
+                >
+                  {p.size >= 1024 ? `${Math.round(p.size / 1024)}k` : p.size}
+                  {p.skipped ? '·skip' : p.passed ? '·✓' : '·✗'}
+                </span>
+              ))}
+            </div>
+            <span className="text-[10px] text-fg-faint">
+              needle recall vs prompt size — sizes are nominal (~chars/4)
+            </span>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }
@@ -421,6 +474,51 @@ function ExpandedDetail({ row }: { row: BenchCaseRow }) {
         </Section>
       ) : null}
 
+      {row.transcript !== undefined && row.transcript.length > 1 ? (
+        <Section
+          title={`Conversation transcript (${row.transcript.length} entries)`}
+          subtitle="Scripted multi-turn / tool-loop exchange — the evaluator scores the FINAL assistant answer only"
+          className="lg:col-span-2"
+        >
+          <ol className="flex flex-col gap-2">
+            {row.transcript.map((entry, i) => (
+              <li
+                key={`${i}-${entry.role}`}
+                className={`rounded-md border px-3 py-2 text-[12px] ${
+                  entry.role === 'user'
+                    ? 'border-accent/30 bg-accent/5'
+                    : entry.role === 'tool'
+                      ? 'border-sky-500/30 bg-sky-500/5'
+                      : 'border-border bg-bg'
+                }`}
+              >
+                <p className="flex items-center gap-2 font-mono text-[10px] font-semibold uppercase tracking-wide text-fg-muted">
+                  {entry.role}
+                  {entry.toolCallId !== undefined ? (
+                    <span className="font-normal normal-case text-fg-faint">→ {entry.toolCallId}</span>
+                  ) : null}
+                  {entry.ms !== undefined ? (
+                    <span className="ml-auto font-normal normal-case text-fg-faint">
+                      {(entry.ms / 1000).toFixed(1)} s
+                    </span>
+                  ) : null}
+                </p>
+                {entry.content.length > 0 ? (
+                  <pre className="mt-1 whitespace-pre-wrap break-words font-mono text-[11px] text-fg">
+                    {entry.content.length > 600 ? `${entry.content.slice(0, 600)}…` : entry.content}
+                  </pre>
+                ) : null}
+                {entry.toolCalls !== undefined && entry.toolCalls.length > 0 ? (
+                  <p className="mt-1 font-mono text-[11px] text-sky-700 dark:text-sky-400">
+                    {entry.toolCalls.map((tc) => `${tc.name}(${tc.argumentsRaw})`).join(' · ')}
+                  </p>
+                ) : null}
+              </li>
+            ))}
+          </ol>
+        </Section>
+      ) : null}
+
       {row.reasoningOutput.length > 0 ? (
         <Section
           title="Reasoning trace"
@@ -583,12 +681,8 @@ function describeExpect(expect: BenchCaseRow['expect']): { subtitle: string; bod
 // ── Summary footer ───────────────────────────────────────────────────
 
 function SummaryFooter({ summary }: { summary: BenchSummary }) {
-  const passClass =
-    summary.passRate >= 0.9
-      ? 'text-emerald-600 dark:text-emerald-400'
-      : summary.passRate >= 0.6
-        ? 'text-amber-600 dark:text-amber-400'
-        : 'text-red-600 dark:text-red-400';
+  const passClass = passTextClass(Math.round(summary.passRate * 100));
+  const ci = summary.total >= 5 ? wilsonInterval(summary.passed, summary.total) : null;
   // Sort tags by total desc so the busiest categories surface first.
   const tags = Array.from(summary.byTag.entries()).sort(
     ([, a], [, b]) => b.total - a.total || b.passed - a.passed,
@@ -599,7 +693,11 @@ function SummaryFooter({ summary }: { summary: BenchSummary }) {
         <Stat
           label="Pass"
           value={`${summary.passed}/${summary.total}`}
-          sub={`${Math.round(summary.passRate * 100)}%`}
+          sub={
+            ci === null
+              ? `${Math.round(summary.passRate * 100)}%`
+              : `${Math.round(summary.passRate * 100)}% · CI ${Math.round(ci.lo * 100)}–${Math.round(ci.hi * 100)}%`
+          }
           accent={passClass}
         />
         <Stat
@@ -636,14 +734,27 @@ function SummaryFooter({ summary }: { summary: BenchSummary }) {
 function TagBar({ tag, passed, total }: { tag: string; passed: number; total: number }) {
   const ratio = total === 0 ? 0 : passed / total;
   const pct = Math.round(ratio * 100);
-  const bar = ratio >= 0.9 ? 'bg-emerald-500' : ratio >= 0.6 ? 'bg-amber-500' : 'bg-red-500';
+  const bar = passBarClass(pct);
+  // Per-tag CI, suppressed below n=5 where the interval is too wide to inform.
+  const ci = total >= 5 ? wilsonInterval(passed, total) : null;
+  const title =
+    ci === null
+      ? `${tag}: ${passed}/${total} — too few cases for a meaningful interval`
+      : `${tag}: ${passed}/${total} (95% CI ${Math.round(ci.lo * 100)}–${Math.round(ci.hi * 100)}%)`;
   return (
-    <li className="flex items-center gap-3">
-      <span className="w-32 shrink-0 truncate font-mono text-[11px] text-fg" title={tag}>
+    <li className="flex items-center gap-3" title={title}>
+      <span className="w-32 shrink-0 truncate font-mono text-[11px] text-fg">
         {tag}
       </span>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-bg-subtle">
+      <div className="relative h-1.5 flex-1 overflow-hidden rounded-full bg-bg-subtle">
         <div className={`h-full ${bar}`} style={{ width: `${Math.max(4, pct)}%` }} />
+        {ci !== null ? (
+          <div
+            className="absolute inset-y-0 rounded-full bg-fg/20"
+            style={{ left: `${Math.round(ci.lo * 100)}%`, width: `${Math.max(1, Math.round((ci.hi - ci.lo) * 100))}%` }}
+            aria-hidden
+          />
+        ) : null}
       </div>
       <span className="w-16 shrink-0 text-right font-mono text-[11px] tabular-nums text-fg-muted">
         {passed}/{total}

@@ -455,6 +455,30 @@ function CaseRow({
               ⚖ soften
             </span>
           ) : null}
+          {c.followUps !== undefined ? (
+            <span
+              className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-400"
+              title={`Scripted conversation — ${c.followUps.length + 1} user turns; the FINAL answer is evaluated. Authorable via followUps in exported YAML.`}
+            >
+              ⤷ {c.followUps.length + 1} turns
+            </span>
+          ) : null}
+          {c.toolResponders !== undefined ? (
+            <span
+              className="rounded-full bg-sky-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-sky-700 dark:text-sky-400"
+              title="Tool-execution loop — canned tool results are fed back until the model answers in text. Authorable via toolResponders in exported YAML."
+            >
+              ⟳ tool loop
+            </span>
+          ) : null}
+          {c.sweep !== undefined ? (
+            <span
+              className="rounded-full bg-violet-500/15 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wider text-violet-700 dark:text-violet-400"
+              title={`Context sweep — expands into ${c.sweep.sizes.length} per-size instances (${c.sweep.sizes.map((s) => `${Math.round(s / 1024)}k`).join('/')}) at run time.`}
+            >
+              ⇲ ctx sweep
+            </span>
+          ) : null}
           {c.tags.map((t) => {
             const active = tagFilter.has(t);
             return (

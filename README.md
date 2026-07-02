@@ -41,7 +41,7 @@ are described in [CI / CD](#ci--cd) below.
 
 1. **Probes `127.0.0.1`** for any OpenAI-compatible LLM server — Ollama,
    LM Studio, vLLM, llama.cpp, and any custom host you add.
-2. **Runs a 100-case eval suite** against every model you select.
+2. **Runs a 312-case eval suite** against every model you select.
    Each case carries one or more **tags** so you can group cases by
    capability and either filter the panel view or opt-in to running
    only the matching subset. Coverage:
@@ -71,7 +71,7 @@ are described in [CI / CD](#ci--cd) below.
    (`tool_use` / `vision`).
 
    Typical wall-clock for a single model on a modern laptop is
-   **~10–15 minutes** for the full 100-case run (closer to 5 min
+   **~30–45 minutes** for the full 312-case run (10–15 min
    for a fast 7B, 25+ min for a reasoning model on high effort).
    The runner is sequential per model so multi-model comparisons
    scale linearly. **Use the category filter** to run a single
@@ -92,6 +92,41 @@ are described in [CI / CD](#ci--cd) below.
    runs. *Clear last run* only drops the most recent session.
 5. **Exports everything** — interactive HTML (collapsible, printable,
    single self-contained file), Markdown, JSON, or print-to-PDF.
+
+### New in 1.0
+
+- **Statistical honesty.** Wilson 95% confidence intervals on every
+  pass rate (summary cells, per-tag bars, error bars on the scatter)
+  and a Newcombe significance test against the leading run — the
+  comparison table now says "within noise" instead of implying a 3-pt
+  gap means something.
+- **Engine-truth capabilities.** Vision / Tool Use gates are read from
+  the engine itself (Ollama `/api/show`, LM Studio REST, llama.cpp
+  `/props`) with name heuristics only as fallback — vision and tool
+  cases now actually run on models that support them, and capability
+  chips show a ✓ when engine-verified. Quant + parameter-size chips
+  come along for free.
+- **Results that travel.** Lossless run export/import
+  (`openbench-run-v1` JSON — overlay a friend's runs on your charts)
+  and per-run **share links**: a summary-only payload compressed into
+  the URL fragment, nothing leaves the browser.
+- **Multi-turn & tool-loop cases.** Cases can script follow-up user
+  turns and canned tool results — the runner feeds `role:'tool'`
+  messages back until the model answers, and the row detail shows the
+  full transcript.
+- **Context-length sweep.** `ctx-needle` expands to ~2k/8k/32k
+  needle-in-haystack instances per model (over-window sizes skip
+  honestly) with a degradation strip per model.
+- **Quant A/B + Trends.** Same base model at different quants gets a
+  delta table with CI-backed "quality holds / degrades" verdicts and
+  connector lines in the scatter; a Trends tab plots pass-rate over
+  time across your stored history with CI bands.
+- **312-case suite** (~3× v0.9), ≥60% parameterized against
+  memorization, informed by 2025–26 gotcha research (car-wash test,
+  seahorse emoji, inverted riddles, GSM-Symbolic-style perturbations).
+- **Test suite + PWA.** The deterministic evaluator, case generator,
+  statistics, and every built-in case are pinned by ~155 vitest tests
+  (CI-gated); the app installs and works offline.
 
 There is no backend. The browser talks to `127.0.0.1` directly. Your
 prompts, your model output, your timings — none of it ever leaves your
@@ -185,7 +220,7 @@ Mixed content evaporates and PNA does not apply.
 
 ## How the eval suite works
 
-The 100 cases are inlined in
+The 312 cases are inlined in
 [`src/components/local-models/builtin-suite.ts`](src/components/local-models/builtin-suite.ts).
 Each case has:
 
@@ -367,7 +402,7 @@ a full case-editor:
     → explicit refusal with an "extract text first" hint, since local
     chat-completion APIs don't accept those bytes.
 - **Reset** any built-in to its default; **Delete** any custom; or
-  **Reset all** to roll back the entire suite to the shipped 100 cases.
+  **Reset all** to roll back the entire suite to the shipped 312 cases.
 - **Export YAML** — every case in the user's order. **Import YAML** —
   accepts the wrapper shape, a bare list, or a `{ suite: { cases } }`
   block.
@@ -504,7 +539,7 @@ openbench-local/
 │           ├── bench-direct.ts             # streaming /chat/completions client
 │           ├── discovery-direct.ts         # localhost port probing
 │           ├── evaluator-direct.ts         # browser-side scoring
-│           ├── builtin-suite.ts            # the 18 inlined eval cases
+│           ├── builtin-suite.ts            # core suite + type defs (see suite-extra-*.ts)
 │           ├── vision-fixtures.ts          # base64 PNG images for vision cases
 │           ├── capabilities.ts             # per-model capability inference
 │           ├── cors-recipes.ts             # per-engine CORS config snippets

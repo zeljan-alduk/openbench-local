@@ -35,8 +35,10 @@ import {
   summariseWithSuite,
 } from './bench-direct';
 import { LOCAL_MODEL_RATING_SUITE } from './builtin-suite';
-import { inferCapabilities } from './capabilities';
-import { materializeCase, materializeCases } from './case-generate';
+import { resolveCapabilities } from './capabilities';
+import { enrichModelsWithEngineMeta } from './engine-metadata';
+import { materializeCase, materializeCasesDetailed } from './case-generate';
+import { expandSweeps, parseSweepId } from './ctx-haystack';
 import { useCaseStore } from './case-store';
 import { CasesPanel } from './cases-panel';
 import { CorsHelpPanel } from './cors-help-panel';
@@ -59,7 +61,14 @@ import {
   putRun,
   serialiseSummary,
   storedToRunState,
+  type StoredRun,
 } from './history-store';
+import {
+  decodeShareFragment,
+  hasShareFragment,
+  type ShareSummaryV1,
+} from './run-transfer';
+import { SharedRunCard } from './shared-run-card';
 import { HistoryDialog } from './history-dialog';
 import { type ModelRunState, MultiBenchPanel, type RunPhase } from './multi-bench-panel';
 import { mergeRunConfig, usePerModelConfig } from './per-model-config';
@@ -115,6 +124,46 @@ export function LocalModelsShell() {
   // user prune older runs; "Clear results" only pops the latest
   // session.
   const [historyOpen, setHistoryOpen] = useState(false);
+  // Share-link payload decoded from location.hash on mount (null =
+  // no link / unsupported browser / undecodable fragment).
+  const [sharedPayload, setSharedPayload] = useState<ShareSummaryV1 | null>(null);
+  const [shareOpenFailed, setShareOpenFailed] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+    const hash = window.location.hash;
+    if (!hasShareFragment(hash)) return;
+    let cancelled = false;
+    void decodeShareFragment(hash).then((p) => {
+      if (cancelled) return;
+      if (p !== null) setSharedPayload(p);
+      else setShareOpenFailed(true);
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const dismissShared = useCallback(() => {
+    setSharedPayload(null);
+    // Drop the fragment so a reload doesn't resurrect the card.
+    if (typeof window !== 'undefined' && hasShareFragment(window.location.hash)) {
+      window.history.replaceState(null, '', window.location.pathname + window.location.search);
+    }
+  }, []);
+
+  const onSharedSaved = useCallback((stored: StoredRun) => {
+    setRuns((prev) => [...prev, storedToRunState(stored)]);
+  }, []);
+
+  const onRunsImported = useCallback((imported: readonly StoredRun[]) => {
+    setRuns((prev) => {
+      const known = new Set(prev.map((r) => r.runId));
+      const fresh = imported.filter((s) => !known.has(s.runId)).map(storedToRunState);
+      return fresh.length > 0 ? [...prev, ...fresh] : prev;
+    });
+  }, []);
+
   // biome-ignore lint/correctness/useExhaustiveDependencies: intentional one-shot
   useEffect(() => {
     let cancelled = false;
@@ -147,11 +196,17 @@ export function LocalModelsShell() {
     };
   }, []);
 
+  // Guards against a rescan starting while a previous enrichment pass
+  // is still in flight — only the latest scan may publish results.
+  const scanSeqRef = useRef(0);
+
   const startScan = useCallback(async (hostsForScan: readonly string[]) => {
+    const seq = ++scanSeqRef.current;
     setPhase('scanning');
     setScan(null);
     try {
       const r = await discoverDirect({ extraHosts: hostsForScan });
+      if (seq !== scanSeqRef.current) return;
       setScan(r);
       setSelectedKeys((prev) => {
         // Auto-pick the first discovered model on the very first scan
@@ -162,8 +217,14 @@ export function LocalModelsShell() {
         return new Set([modelKey(first)]);
       });
       setPhase('ready');
+      // Best-effort engine-truth capability enrichment; chips and the
+      // capability gate pick up `meta` when it lands. `scan.models` is
+      // the authoritative carrier — probes keep un-enriched twins.
+      const enriched = await enrichModelsWithEngineMeta(r.models);
+      if (seq !== scanSeqRef.current) return;
+      setScan((prev) => (prev === null ? prev : { ...prev, models: enriched }));
     } catch {
-      setPhase('error');
+      if (seq === scanSeqRef.current) setPhase('error');
     }
   }, []);
 
@@ -224,11 +285,15 @@ export function LocalModelsShell() {
     // session is then scored on the SAME freshly-randomized instances —
     // fair cross-model comparison, and a fresh draw each run so a model
     // can't pass famous gotchas from memorization. Plain cases pass
-    // through untouched.
+    // through untouched. The sampled var bindings are captured and
+    // stamped onto each stored run so a surprising result can be traced
+    // to the exact drawn instance.
+    const materialized = materializeCasesDetailed(effectiveSuite.cases);
     const sessionSuite = {
       ...effectiveSuite,
-      cases: materializeCases(effectiveSuite.cases),
+      cases: materialized.cases,
     };
+    const sessionGeneratedVars = materialized.varsByCaseId;
 
     // Append (not replace) — older runs stay visible above the new
     // ones. Index of the first newly-appended entry is `appendBase`;
@@ -270,6 +335,13 @@ export function LocalModelsShell() {
           error: r.error,
           warmUp: r.warmUp,
           runConfig: r.runConfig,
+          schemaVersion: 2,
+          suiteVersion: effectiveSuite.version,
+          appVersion: typeof __APP_VERSION__ === 'string' ? __APP_VERSION__ : 'dev',
+          ...(Object.keys(sessionGeneratedVars).length > 0
+            ? { generatedVars: sessionGeneratedVars }
+            : {}),
+          origin: 'local',
         });
         return prev;
       });
@@ -289,13 +361,24 @@ export function LocalModelsShell() {
         }
         const accumulated: BenchCaseRow[] = [];
         try {
-          const caps = inferCapabilities(m.id);
+          const caps = resolveCapabilities(m.id, m.meta);
+          // Context sweeps expand per model: the haystacks are seeded
+          // (byte-identical for every model), but sizes beyond THIS
+          // model's context window become pre-set skipped rows.
+          const modelSuite = {
+            ...sessionSuite,
+            cases: expandSweeps(sessionSuite.cases, m.contextTokens),
+          };
           const res = await runBenchDirect({
-            suite: sessionSuite,
+            suite: modelSuite,
             modelId: m.id,
             chatBaseUrl: m.chatBaseUrl,
             signal: ac.signal,
-            modelCapabilities: { toolUse: caps.toolUse, vision: caps.vision },
+            modelCapabilities: {
+              toolUse: caps.toolUse,
+              vision: caps.vision,
+              sources: { toolUse: caps.sources.toolUse, vision: caps.sources.vision },
+            },
             runConfig: entry.runConfig,
             onWarmUp: (warmUp) => {
               setRuns((prev) => prev.map((r, i) => (i === slot ? { ...r, warmUp } : r)));
@@ -336,7 +419,7 @@ export function LocalModelsShell() {
             onCase: (row) => {
               accumulated.push(row);
               const snapshot = [...accumulated];
-              const summary = summariseWithSuite(snapshot, sessionSuite);
+              const summary = summariseWithSuite(snapshot, modelSuite);
               setRuns((prev) =>
                 prev.map((r, i) =>
                   i === slot ? { ...r, rows: snapshot, summary, inFlight: null } : r,
@@ -461,7 +544,22 @@ export function LocalModelsShell() {
   // index in that model's `rows` array; preserves all other rows.
   const retryCase = useCallback(
     async (modelKeyTarget: string, caseId: string) => {
-      const c = effectiveSuite.cases.find((x) => x.id === caseId);
+      // Sweep instances ('ctx-needle@8192') resolve to their authored
+      // family case, re-expanded at the same size for this model.
+      const sweepRef = parseSweepId(caseId);
+      const family =
+        sweepRef !== null
+          ? effectiveSuite.cases.find((x) => x.id === sweepRef.familyId && x.sweep !== undefined)
+          : undefined;
+      const c =
+        family !== undefined && sweepRef !== null
+          ? expandSweeps(
+              [{ ...family, sweep: { ...(family.sweep as NonNullable<typeof family.sweep>), sizes: [sweepRef.size] } }],
+              runs.find(
+                (r) => `${r.model.source}::${r.model.id}::${r.model.port}` === modelKeyTarget,
+              )?.model.contextTokens,
+            )[0]
+          : effectiveSuite.cases.find((x) => x.id === caseId);
       if (c === undefined) {
         // Most likely cause: user deleted / disabled / hidden the case
         // from the panel after the bench completed. Surface the reason
@@ -553,7 +651,16 @@ export function LocalModelsShell() {
   const onExportJson = useCallback(() => downloadJson(exportCtx), [exportCtx]);
   const onPrintReport = useCallback(() => openPrint(), []);
 
-  const totalCasesPerModel = effectiveSuite.cases.length;
+  // A sweep case counts as its expanded instance count — the progress
+  // denominator should match the rows the runner will actually emit.
+  const totalCasesPerModel = useMemo(
+    () =>
+      effectiveSuite.cases.reduce(
+        (sum, c) => sum + (c.sweep !== undefined && c.sweep.sizes.length > 0 ? c.sweep.sizes.length : 1),
+        0,
+      ),
+    [effectiveSuite.cases],
+  );
   const completedRows = useMemo(() => runs.reduce((sum, r) => sum + r.rows.length, 0), [runs]);
   const totalRows = totalCasesPerModel * Math.max(1, selectedList.length);
   const progress =
@@ -597,6 +704,19 @@ export function LocalModelsShell() {
 
   return (
     <div className="flex flex-col gap-6">
+      {sharedPayload !== null ? (
+        <SharedRunCard
+          payload={sharedPayload}
+          onDismiss={dismissShared}
+          onSaved={onSharedSaved}
+        />
+      ) : null}
+      {shareOpenFailed ? (
+        <p className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-4 py-2.5 text-[12px] text-amber-700 dark:text-amber-400">
+          Couldn't open the shared link — the URL may be truncated, or this browser lacks
+          CompressionStream (Safari &lt; 16.4). Ask the sender for an “Export runs” file instead.
+        </p>
+      ) : null}
       <StatusStrip
         phase={phase}
         scan={scan}
@@ -702,7 +822,7 @@ export function LocalModelsShell() {
             </p>
             <h2 className="mt-1 text-base font-semibold text-fg">Rate quality × speed</h2>
             <p className="mt-1 max-w-xl text-xs leading-relaxed text-fg-muted">
-              One hundred cases probe instruction-following and constrained generation, JSON
+              Three hundred twelve cases probe instruction-following and constrained generation, JSON
               output, code (trace · debug · Big-O · SQL · language ID · generation), math word
               problems · probability · algebra · geometry, classic logic puzzles &amp; object
               tracking, well-known LLM gotchas (9.11 vs 9.9 · bat-and-ball · Alice's siblings ·
@@ -845,6 +965,7 @@ export function LocalModelsShell() {
         onOpenChange={setHistoryOpen}
         onRunsDeleted={onDeleteRunsFromHistory}
         onWipeAll={onWipeHistory}
+        onRunsImported={onRunsImported}
       />
     </div>
   );

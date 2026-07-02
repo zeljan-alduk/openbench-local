@@ -45,18 +45,25 @@ function occurrences(haystack: string, needle: string, ci: boolean): number {
   return count;
 }
 
+/**
+ * Source of randomness for sampling. Injectable so tests (and any
+ * future seeded-run feature) can make materialization deterministic;
+ * production callers omit it and get Math.random.
+ */
+export type Rng = () => number;
+
 /** Sample one variable given the values of the variables declared before it. */
-function sampleVar(spec: VarSpec, scope: Record<string, unknown>): unknown {
+function sampleVar(spec: VarSpec, scope: Record<string, unknown>, rng: Rng): unknown {
   if ('pick' in spec) {
     const choices = spec.pick;
     if (choices.length === 0) throw new Error('pick list is empty');
-    return choices[Math.floor(Math.random() * choices.length)];
+    return choices[Math.floor(rng() * choices.length)];
   }
   if ('int' in spec) {
     const { min, max, step = 1 } = spec.int;
     if (!(max >= min) || !(step > 0)) throw new Error(`bad int range [${min}, ${max}] step ${step}`);
     const steps = Math.floor((max - min) / step);
-    return min + step * Math.floor(Math.random() * (steps + 1));
+    return min + step * Math.floor(rng() * (steps + 1));
   }
   if ('expr' in spec) return evalExpr(spec.expr, scope);
   throw new Error('var spec must have one of: pick, int, expr');
@@ -91,13 +98,16 @@ function fillExpect(expect: InlineCase['expect'], vars: Record<string, unknown>)
   }
 }
 
-function sampleVars(gen: CaseGenerator): Record<string, unknown> {
+function sampleVars(gen: CaseGenerator, rng: Rng): Record<string, unknown> {
   const scope: Record<string, unknown> = {};
   for (const [name, spec] of Object.entries(gen.vars)) {
-    scope[name] = sampleVar(spec, scope);
+    scope[name] = sampleVar(spec, scope, rng);
   }
   return scope;
 }
+
+/** Sampled variable bindings for one materialized case, for persistence. */
+export type SampledVars = Readonly<Record<string, string | number>>;
 
 /**
  * Materialize one case. Plain cases pass through untouched. A template
@@ -105,13 +115,21 @@ function sampleVars(gen: CaseGenerator): Record<string, unknown> {
  * the runner/evaluator treat it normally). On any authoring error we log
  * and return the case unchanged rather than crashing the whole run.
  */
-export function materializeCase(c: InlineCase): InlineCase {
-  if (c.generate === undefined) return c;
+export function materializeCase(c: InlineCase, rng: Rng = Math.random): InlineCase {
+  return materializeCaseDetailed(c, rng).case;
+}
+
+/** Like `materializeCase`, but also reports the sampled var bindings (null for plain cases / errors). */
+export function materializeCaseDetailed(
+  c: InlineCase,
+  rng: Rng = Math.random,
+): { readonly case: InlineCase; readonly vars: SampledVars | null } {
+  if (c.generate === undefined) return { case: c, vars: null };
   try {
-    const vars = sampleVars(c.generate);
+    const vars = sampleVars(c.generate, rng);
     const { generate: _generate, ...rest } = c;
     void _generate;
-    return {
+    const materialized: InlineCase = {
       ...rest,
       input: fillTemplate(c.input, vars),
       expect: fillExpect(c.expect, vars),
@@ -123,17 +141,61 @@ export function materializeCase(c: InlineCase): InlineCase {
             })),
           }
         : {}),
+      ...(c.followUps !== undefined
+        ? { followUps: c.followUps.map((t) => fillTemplate(t, vars)) }
+        : {}),
+      ...(c.toolResponders !== undefined
+        ? {
+            toolResponders: c.toolResponders.map((r) => ({
+              ...r,
+              response: fillTemplate(r.response, vars),
+              ...(r.byArgs !== undefined
+                ? {
+                    byArgs: r.byArgs.map((b) => ({
+                      ...b,
+                      response: fillTemplate(b.response, vars),
+                    })),
+                  }
+                : {}),
+            })),
+          }
+        : {}),
     };
+    // Persist only serializable scalars; exotic expr results degrade to strings.
+    const flat: Record<string, string | number> = {};
+    for (const [k, v] of Object.entries(vars)) {
+      flat[k] = typeof v === 'number' ? v : String(v);
+    }
+    return { case: materialized, vars: flat };
   } catch (e) {
     // eslint-disable-next-line no-console
     console.warn(`case "${c.id}": could not materialize generate block — running template as-is.`, e);
-    return c;
+    return { case: c, vars: null };
   }
 }
 
 /** Materialize a whole suite's worth of cases once (e.g. at the start of a run). */
-export function materializeCases(cases: readonly InlineCase[]): InlineCase[] {
-  return cases.map(materializeCase);
+export function materializeCases(cases: readonly InlineCase[], rng: Rng = Math.random): InlineCase[] {
+  return cases.map((c) => materializeCase(c, rng));
+}
+
+/**
+ * Like `materializeCases`, but also collects the sampled var bindings
+ * keyed by case id — stored on the run record so a surprising result
+ * can be traced back to the exact drawn instance.
+ */
+export function materializeCasesDetailed(
+  cases: readonly InlineCase[],
+  rng: Rng = Math.random,
+): { readonly cases: InlineCase[]; readonly varsByCaseId: Readonly<Record<string, SampledVars>> } {
+  const out: InlineCase[] = [];
+  const varsByCaseId: Record<string, SampledVars> = {};
+  for (const c of cases) {
+    const { case: materialized, vars } = materializeCaseDetailed(c, rng);
+    out.push(materialized);
+    if (vars !== null) varsByCaseId[c.id] = vars;
+  }
+  return { cases: out, varsByCaseId };
 }
 
 /** True when a case carries a parameterization block (for UI badges). */

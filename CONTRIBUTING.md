@@ -10,10 +10,17 @@ welcome.
 pnpm install
 pnpm dev          # http://localhost:5173
 pnpm typecheck    # strict TS, no emit
+pnpm test         # vitest unit suite (evaluator, case generation, stats)
 pnpm build        # production build → dist/
 ```
 
-Node 20+ recommended.
+Node 20+ recommended (CI runs Node 24).
+
+Tests are colocated (`src/**/*.test.ts`, plain node environment) and
+import from `vitest` explicitly. The deterministic scoring core —
+`evaluator-direct.ts`, `case-generate.ts`, `cases-yaml.ts`,
+`capabilities.ts` — is pure TypeScript; changes there need matching
+golden tests, since a silent scoring bug corrupts every stored result.
 
 ## Project shape
 
@@ -50,7 +57,7 @@ local engines speak OpenAI-compat out of the box.
 ## Pull requests
 
 - One change per PR — easier to review, easier to revert.
-- Run `pnpm typecheck` and `pnpm build` before opening.
+- Run `pnpm typecheck`, `pnpm test`, and `pnpm build` before opening.
 - For UI changes, attach a screenshot or short clip.
 
 ## Reporting bugs

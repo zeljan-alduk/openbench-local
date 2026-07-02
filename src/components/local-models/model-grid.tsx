@@ -15,7 +15,7 @@
  * laptop are real, and parallel runs would also distort tok/s).
  */
 
-import { inferCapabilities } from './capabilities';
+import { resolveCapabilities } from './capabilities';
 import { CapabilityChip } from './capability-chip';
 import type { DiscoveredLocalModel } from './discovery-direct';
 import { type SelectedKey, modelKey } from './selection';
@@ -91,16 +91,26 @@ export function ModelGrid({
                   <Chip>{formatContext(m.contextTokens)} ctx</Chip>
                 ) : null}
                 {(() => {
-                  const caps = inferCapabilities(m.id);
+                  const caps = resolveCapabilities(m.id, m.meta);
                   return (
                     <>
-                      {caps.embedding ? <CapabilityChip kind="embedding" /> : null}
-                      {caps.vision ? <CapabilityChip kind="vision" /> : null}
-                      {caps.toolUse ? <CapabilityChip kind="tool_use" /> : null}
-                      {caps.reasoning ? <CapabilityChip kind="reasoning" /> : null}
+                      {caps.embedding ? (
+                        <CapabilityChip kind="embedding" verified={caps.sources.embedding === 'engine'} />
+                      ) : null}
+                      {caps.vision ? (
+                        <CapabilityChip kind="vision" verified={caps.sources.vision === 'engine'} />
+                      ) : null}
+                      {caps.toolUse ? (
+                        <CapabilityChip kind="tool_use" verified={caps.sources.toolUse === 'engine'} />
+                      ) : null}
+                      {caps.reasoning ? (
+                        <CapabilityChip kind="reasoning" verified={caps.sources.reasoning === 'engine'} />
+                      ) : null}
                     </>
                   );
                 })()}
+                {m.meta?.quantization !== undefined ? <Chip>{m.meta.quantization}</Chip> : null}
+                {m.meta?.parameterSize !== undefined ? <Chip>{m.meta.parameterSize}</Chip> : null}
                 {customised ? (
                   <span
                     className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400"

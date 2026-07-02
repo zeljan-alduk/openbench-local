@@ -11,8 +11,9 @@
  */
 
 import * as Dialog from '@radix-ui/react-dialog';
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { RunConfig } from './bench-direct';
+import { passTextClass } from './status-colors';
 import {
   clearAll as clearAllRuns,
   deleteRun,
@@ -20,6 +21,14 @@ import {
   getAllRuns,
   type StoredRun,
 } from './history-store';
+import {
+  decodeRunExport,
+  encodeRunExport,
+  encodeShareFragment,
+  importRuns,
+  shareLinksSupported,
+  shareSummaryFromStored,
+} from './run-transfer';
 
 interface Props {
   readonly open: boolean;
@@ -35,6 +44,8 @@ interface Props {
    * its in-memory state.
    */
   readonly onWipeAll: () => void;
+  /** Called with the freshly persisted records after a successful import. */
+  readonly onRunsImported: (runs: readonly StoredRun[]) => void;
 }
 
 interface SessionGroup {
@@ -43,11 +54,15 @@ interface SessionGroup {
   readonly runs: readonly StoredRun[];
 }
 
-export function HistoryDialog({ open, onOpenChange, onRunsDeleted, onWipeAll }: Props) {
+export function HistoryDialog({ open, onOpenChange, onRunsDeleted, onWipeAll, onRunsImported }: Props) {
   const [stored, setStored] = useState<readonly StoredRun[]>([]);
   const [loading, setLoading] = useState(false);
   const [selected, setSelected] = useState<ReadonlySet<string>>(new Set());
   const [confirmWipe, setConfirmWipe] = useState(false);
+  const [transferNote, setTransferNote] = useState<{ tone: 'ok' | 'warn'; text: string } | null>(
+    null,
+  );
+  const importInputRef = useRef<HTMLInputElement | null>(null);
 
   const refresh = useCallback(async () => {
     setLoading(true);
@@ -161,6 +176,47 @@ export function HistoryDialog({ open, onOpenChange, onRunsDeleted, onWipeAll }: 
     await refresh();
   };
 
+  // Export selected runs (or everything when nothing is ticked) as a
+  // lossless, re-importable openbench-run-v1 file. Rows in IDB are
+  // already image-slimmed, so the file stays reasonably sized.
+  const onExportRuns = () => {
+    const picked = selected.size > 0 ? stored.filter((r) => selected.has(r.runId)) : stored;
+    if (picked.length === 0) return;
+    const blob = new Blob([encodeRunExport(picked)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `openbench-runs-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    setTransferNote({
+      tone: 'ok',
+      text: `Exported ${picked.length} ${picked.length === 1 ? 'run' : 'runs'} — share the file; others import it right here.`,
+    });
+  };
+
+  const onImportFile = async (file: File) => {
+    try {
+      const { runs, warnings } = decodeRunExport(await file.text());
+      const existing = new Set(stored.map((r) => r.runId));
+      const result = await importRuns(runs, existing);
+      if (result.imported > 0) onRunsImported(result.storedRuns);
+      await refresh();
+      const bits: string[] = [`Imported ${result.imported} ${result.imported === 1 ? 'run' : 'runs'}`];
+      if (result.renumbered > 0) bits.push(`${result.renumbered} re-keyed (id collision)`);
+      if (result.failed > 0) bits.push(`${result.failed} failed to persist (storage quota?)`);
+      if (warnings.length > 0) bits.push(`${warnings.length} skipped as invalid`);
+      setTransferNote({
+        tone: result.failed > 0 || warnings.length > 0 ? 'warn' : 'ok',
+        text: `${bits.join(' · ')}.`,
+      });
+    } catch (e) {
+      setTransferNote({ tone: 'warn', text: e instanceof Error ? e.message : String(e) });
+    }
+  };
+
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
       <Dialog.Portal>
@@ -228,6 +284,18 @@ export function HistoryDialog({ open, onOpenChange, onRunsDeleted, onWipeAll }: 
             )}
           </div>
 
+          {transferNote !== null ? (
+            <p
+              className={`mx-5 mb-1 rounded-md px-3 py-1.5 text-[11px] ${
+                transferNote.tone === 'ok'
+                  ? 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-400'
+                  : 'bg-amber-500/15 text-amber-700 dark:text-amber-400'
+              }`}
+            >
+              {transferNote.text}
+            </p>
+          ) : null}
+
           <footer className="flex flex-wrap items-center justify-between gap-3 border-t border-border bg-bg/40 px-5 py-3">
             <label className="flex items-center gap-2 text-[12px] text-fg-muted">
               <input
@@ -240,6 +308,34 @@ export function HistoryDialog({ open, onOpenChange, onRunsDeleted, onWipeAll }: 
               {selected.size > 0 ? `${selected.size} selected` : 'Select all'}
             </label>
             <div className="flex items-center gap-2">
+              <input
+                ref={importInputRef}
+                type="file"
+                accept="application/json,.json"
+                className="hidden"
+                onChange={(e) => {
+                  const f = e.target.files?.[0];
+                  if (f !== undefined) void onImportFile(f);
+                  e.target.value = '';
+                }}
+              />
+              <button
+                type="button"
+                onClick={() => importInputRef.current?.click()}
+                className="rounded-lg border border-border bg-bg px-3 py-1.5 text-xs font-medium text-fg hover:border-accent/60"
+                title="Import an openbench-run-v1 JSON file — imported runs overlay your own in the comparison"
+              >
+                Import runs
+              </button>
+              <button
+                type="button"
+                onClick={onExportRuns}
+                disabled={totalRuns === 0}
+                className="rounded-lg border border-border bg-bg px-3 py-1.5 text-xs font-medium text-fg hover:border-accent/60 disabled:cursor-not-allowed disabled:opacity-50"
+                title="Export the ticked runs (or everything) as a lossless, re-importable JSON file"
+              >
+                {selected.size > 0 ? `Export ${selected.size}` : 'Export runs'}
+              </button>
               <button
                 type="button"
                 onClick={() => {
@@ -360,14 +456,40 @@ function RunRow({
   const s = run.summary;
   const passLabel = s === null ? '—' : `${s.passed}/${s.total}`;
   const passPct = s === null ? null : Math.round(s.passRate * 100);
-  const passClass =
-    passPct === null
-      ? 'text-fg-muted'
-      : passPct >= 90
-        ? 'text-emerald-600 dark:text-emerald-400'
-        : passPct >= 60
-          ? 'text-amber-600 dark:text-amber-400'
-          : 'text-red-600 dark:text-red-400';
+  const passClass = passTextClass(passPct);
+  const [shareState, setShareState] = useState<'idle' | 'copied' | 'failed'>('idle');
+
+  const onShare = async () => {
+    const payload = shareSummaryFromStored(run);
+    if (payload === null) {
+      setShareState('failed');
+      return;
+    }
+    const fragment = await encodeShareFragment(payload);
+    if (fragment === null) {
+      setShareState('failed');
+      return;
+    }
+    const url = `${window.location.origin}${window.location.pathname}${window.location.search}${fragment}`;
+    try {
+      if (navigator.clipboard?.writeText !== undefined) {
+        await navigator.clipboard.writeText(url);
+      } else {
+        // Clipboard API unavailable (http, older browser) — legacy path.
+        const ta = document.createElement('textarea');
+        ta.value = url;
+        document.body.appendChild(ta);
+        ta.select();
+        document.execCommand('copy');
+        ta.remove();
+      }
+      setShareState('copied');
+      setTimeout(() => setShareState('idle'), 2000);
+    } catch {
+      setShareState('failed');
+    }
+  };
+
   return (
     <div className="flex items-center gap-3 border-b border-border/60 px-3 py-2 last:border-0">
       <input
@@ -386,6 +508,7 @@ function RunRow({
           <span className="font-mono text-[10px] text-fg-faint">
             {fmtTimeOnly(run.startedAt)}
           </span>
+          <OriginBadge origin={run.origin} />
         </div>
         <ParamLine config={run.runConfig} />
       </div>
@@ -399,6 +522,22 @@ function RunRow({
         <div className="hidden font-mono text-[11px] tabular-nums text-fg sm:block">
           {s === null || s.avgTokPerSec === null ? '—' : `${s.avgTokPerSec.toFixed(1)} tok/s`}
         </div>
+        {shareLinksSupported() && s !== null ? (
+          <button
+            type="button"
+            onClick={() => void onShare()}
+            className={`rounded border px-2 py-1 font-mono text-[10px] transition-colors ${
+              shareState === 'copied'
+                ? 'border-emerald-500/50 text-emerald-600 dark:text-emerald-400'
+                : shareState === 'failed'
+                  ? 'border-amber-500/50 text-amber-600 dark:text-amber-400'
+                  : 'border-border bg-bg text-fg-muted hover:border-accent/60 hover:text-fg'
+            }`}
+            title="Copy a share link — summary only (pass rates, per-tag rollup, per-case verdicts); outputs are never in the link"
+          >
+            {shareState === 'copied' ? 'Copied' : shareState === 'failed' ? 'Too large' : 'Share'}
+          </button>
+        ) : null}
         <button
           type="button"
           onClick={onDelete}
@@ -409,6 +548,18 @@ function RunRow({
         </button>
       </div>
     </div>
+  );
+}
+
+function OriginBadge({ origin }: { origin: StoredRun['origin'] }) {
+  if (origin === undefined || origin === 'local') return null;
+  return (
+    <span
+      className="rounded-full bg-sky-500/15 px-2 py-0.5 font-mono text-[9px] font-semibold text-sky-700 dark:text-sky-400"
+      title={origin === 'imported' ? 'Imported from a run-export file' : 'Saved from a share link'}
+    >
+      {origin === 'imported' ? 'imported' : 'via link'}
+    </span>
   );
 }
 

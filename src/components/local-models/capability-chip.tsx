@@ -31,13 +31,32 @@ const LABELS: Readonly<Record<CapabilityKind, string>> = Object.freeze({
   embedding: 'Embedding',
 });
 
-export function CapabilityChip({ kind }: { kind: CapabilityKind }) {
+export function CapabilityChip({
+  kind,
+  verified,
+}: {
+  kind: CapabilityKind;
+  /** True when the flag was reported by the engine (vs name-inferred). */
+  verified?: boolean;
+}) {
   return (
     <span
       className={`inline-flex items-center gap-1 rounded-md border px-1.5 py-0.5 font-mono text-[10px] font-medium leading-none ${PALETTE[kind]}`}
+      title={verified === true ? 'Reported by the engine' : 'Inferred from model name'}
     >
       <Icon kind={kind} />
       {LABELS[kind]}
+      {verified === true ? (
+        <svg viewBox="0 0 16 16" className="h-2.5 w-2.5" aria-hidden fill="none">
+          <path
+            d="M3 8.5 6.5 12 13 4.5"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+          />
+        </svg>
+      ) : null}
     </span>
   );
 }
